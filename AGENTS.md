@@ -207,4 +207,6 @@ script/build_and_run.sh             #   构建 + 签名 + 打包 + 启动
 | `AGENTS-02-功能与架构.md` | 参考项目功能/架构分析 |
 | `AGENTS-03-分阶段计划.md` | 参考分阶段方法 |
 | `docs/HANDOFF-2026-06-15.md` | 项目交接文档 |
+| `docs/CODEX_GIT_WORKFLOW.md` | Codex + Git 协作流程 |
+| `script/safe_git_save.sh` | 安全提交指定文件脚本 |
 | `.reference/vibe-island/` | 参考源码（独立 git 仓库，v1.0.29） |
