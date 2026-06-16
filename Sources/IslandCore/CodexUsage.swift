@@ -26,12 +26,19 @@ public struct CodexUsageEvent: Codable, Equatable, Sendable {
     public let timestamp: Date
     public let usage: CodexTokenUsage
     public let model: String?
+    public let costUSD: Double?
 
-    public init(timestamp: Date, usage: CodexTokenUsage, model: String? = nil) {
+    public init(timestamp: Date, usage: CodexTokenUsage, model: String? = nil, costUSD: Double? = nil) {
         self.timestamp = timestamp
         self.usage = usage
         self.model = model
+        self.costUSD = costUSD
     }
+}
+
+public enum CodexUsageCostSource: String, Codable, Equatable, Sendable {
+    case estimate
+    case ledger
 }
 
 public struct CodexSessionMetadata: Equatable, Sendable {
@@ -47,6 +54,16 @@ public struct CodexSessionMetadata: Equatable, Sendable {
 public enum CodexSessionLogLine: Equatable, Sendable {
     case metadata(CodexSessionMetadata)
     case token(CodexUsageEvent)
+}
+
+public struct CodexParsedTokenUsage: Equatable, Sendable {
+    public let event: CodexUsageEvent
+    public let isCumulative: Bool
+
+    public init(event: CodexUsageEvent, isCumulative: Bool) {
+        self.event = event
+        self.isCumulative = isCumulative
+    }
 }
 
 public enum CodexSessionLogParser {
@@ -74,26 +91,44 @@ public enum CodexSessionLogParser {
             )
         }
 
+        guard let parsed = parseTokenUsageLine(trimmed) else {
+            return nil
+        }
+
+        return .token(parsed.event)
+    }
+
+    public static func parseTokenUsageLine(_ line: String) -> CodexParsedTokenUsage? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard
             containsStringValue("token_count", forKey: "type", in: trimmed),
             let timestampText = stringValue(forKey: "timestamp", in: trimmed),
-            let timestamp = parseTimestamp(timestampText),
-            let usageObject = objectSubstring(forKey: "last_token_usage", in: trimmed)
+            let timestamp = parseTimestamp(timestampText)
         else {
             return nil
         }
 
-        return .token(
-            CodexUsageEvent(
+        let cumulativeObject = objectSubstring(forKey: "total_token_usage", in: trimmed)
+        let lastObject = objectSubstring(forKey: "last_token_usage", in: trimmed)
+
+        let usageObject: Substring
+        let isCumulative: Bool
+        if let cumulativeObject, hasAnyTokenValue(in: cumulativeObject) {
+            usageObject = cumulativeObject
+            isCumulative = true
+        } else if let lastObject {
+            usageObject = lastObject
+            isCumulative = false
+        } else {
+            return nil
+        }
+
+        return CodexParsedTokenUsage(
+            event: CodexUsageEvent(
                 timestamp: timestamp,
-                usage: CodexTokenUsage(
-                    inputTokens: intValue(forKey: "input_tokens", in: usageObject) ?? 0,
-                    cachedInputTokens: intValue(forKey: "cached_input_tokens", in: usageObject) ?? 0,
-                    outputTokens: intValue(forKey: "output_tokens", in: usageObject) ?? 0,
-                    reasoningOutputTokens: intValue(forKey: "reasoning_output_tokens", in: usageObject) ?? 0,
-                    totalTokens: intValue(forKey: "total_tokens", in: usageObject) ?? 0
-                )
-            )
+                usage: usage(from: usageObject)
+            ),
+            isCumulative: isCumulative
         )
     }
 
@@ -195,6 +230,40 @@ public enum CodexSessionLogParser {
         }
 
         return Int(text[valueStart..<valueEnd])
+    }
+
+    private static func usage(from usageObject: Substring) -> CodexTokenUsage {
+        let inputTokens = intValue(forKey: "input_tokens", in: usageObject) ?? 0
+        let cachedInputTokens = intValue(forKey: "cached_input_tokens", in: usageObject)
+            ?? intValue(forKey: "cache_read_input_tokens", in: usageObject)
+            ?? 0
+        let outputTokens = intValue(forKey: "output_tokens", in: usageObject) ?? 0
+        let reasoningOutputTokens = intValue(forKey: "reasoning_output_tokens", in: usageObject) ?? 0
+        let rawTotalTokens = intValue(forKey: "total_tokens", in: usageObject) ?? 0
+        let totalTokens = inputTokens + cachedInputTokens + outputTokens + reasoningOutputTokens > 0
+            ? inputTokens + outputTokens
+            : rawTotalTokens
+
+        return CodexTokenUsage(
+            inputTokens: inputTokens,
+            cachedInputTokens: cachedInputTokens,
+            outputTokens: outputTokens,
+            reasoningOutputTokens: reasoningOutputTokens,
+            totalTokens: totalTokens
+        )
+    }
+
+    private static func hasAnyTokenValue(in usageObject: Substring) -> Bool {
+        [
+            "input_tokens",
+            "cached_input_tokens",
+            "cache_read_input_tokens",
+            "output_tokens",
+            "reasoning_output_tokens",
+            "total_tokens"
+        ].contains { key in
+            (intValue(forKey: key, in: usageObject) ?? 0) > 0
+        }
     }
 
     private static func objectSubstring(forKey key: String, in text: String) -> Substring? {
@@ -334,6 +403,12 @@ public struct CodexUsageSummary: Equatable, Sendable {
     public let trendPoints: [CodexDailyUsage]
     public let trendRecords: [UsageTrendRecord]
     public let heatmapRecords: [UsageHeatmapRecord]
+    public let costSource: CodexUsageCostSource
+
+    public var cachedInputHitRate: Double {
+        guard inputTokens > 0 else { return 0 }
+        return min(1, max(0, Double(cachedInputTokens) / Double(inputTokens)))
+    }
 
     public static let empty = CodexUsageSummary(
         events: [],
@@ -348,7 +423,8 @@ public struct CodexUsageSummary: Equatable, Sendable {
         favoriteModel: "Codex",
         trendPoints: [],
         trendRecords: [],
-        heatmapRecords: []
+        heatmapRecords: [],
+        costSource: .estimate
     )
 
     public static func build(
@@ -371,22 +447,25 @@ public struct CodexUsageSummary: Equatable, Sendable {
         var daily = [Date: CodexDailyAccumulator]()
         var trendRecords: [UsageTrendRecord] = []
         var modelCounts = [String: Int]()
+        let costSource: CodexUsageCostSource = !sortedEvents.isEmpty && sortedEvents.allSatisfy { $0.costUSD != nil }
+            ? .ledger
+            : .estimate
 
         for event in sortedEvents {
             totals = totals.adding(event.usage)
-            let estimatedCost = costEstimator.estimate(event.usage)
-            cost += estimatedCost
+            let eventCost = event.costUSD ?? costEstimator.estimate(event.usage)
+            cost += eventCost
             trendRecords.append(
                 UsageTrendRecord(
                     timestamp: event.timestamp,
                     tokens: Double(event.usage.totalTokens),
-                    cost: estimatedCost,
+                    cost: eventCost,
                     requests: 1
                 )
             )
 
             let day = calendar.startOfDay(for: event.timestamp)
-            daily[day, default: CodexDailyAccumulator()].add(event.usage, cost: estimatedCost)
+            daily[day, default: CodexDailyAccumulator()].add(event.usage, cost: eventCost)
 
             if let model = event.model, !model.isEmpty, model != "custom" {
                 modelCounts[model, default: 0] += 1
@@ -427,7 +506,8 @@ public struct CodexUsageSummary: Equatable, Sendable {
                     cost: point.cost,
                     requests: point.requests
                 )
-            }
+            },
+            costSource: costSource
         )
     }
 

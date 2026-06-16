@@ -13,6 +13,18 @@ APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
+CODESIGN_IDENTITY="${ISLAND_CODESIGN_IDENTITY:-}"
+
+if [[ -z "$CODESIGN_IDENTITY" ]]; then
+  CODESIGN_IDENTITY="$(
+    security find-identity -v -p codesigning 2>/dev/null \
+      | awk -F '"' '/valid identities found/ { next } /"/ { print $2; exit }'
+  )"
+fi
+
+if [[ -z "$CODESIGN_IDENTITY" ]]; then
+  CODESIGN_IDENTITY="-"
+fi
 
 pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 
@@ -43,11 +55,18 @@ cat >"$INFO_PLIST" <<PLIST
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Island checks music playback state so the waveform can reflect real playing audio.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Island samples system audio so the waveform can reflect real playback energy.</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>
 </plist>
 PLIST
+
+codesign --force --deep --sign "$CODESIGN_IDENTITY" "$APP_BUNDLE" >/dev/null
+codesign -dv "$APP_BUNDLE" >/dev/null 2>&1
 
 open_app() {
   /usr/bin/open -n "$APP_BUNDLE"

@@ -11,15 +11,20 @@ final class IslandPanelController {
     private let overlayState: IslandOverlayState
     private let hostingView: IslandTrackingHostingView
     private let taskActivityDataSource: any TaskActivityDataSource
+    private let audioPlaybackDataSource: any AudioPlaybackDataSource
+    private let animationProfile = IslandAnimationProfile.default
     private var taskActivityPollingTask: Task<Void, Never>?
+    private var audioPlaybackPollingTask: Task<Void, Never>?
 
     init(
         screen: NSScreen? = NSScreen.main,
-        taskActivityDataSource: any TaskActivityDataSource = ClaudeTaskActivityDataSource()
+        taskActivityDataSource: any TaskActivityDataSource = CodexTaskActivityDataSource(),
+        audioPlaybackDataSource: any AudioPlaybackDataSource = AudioPlaybackDataSourceFactory.defaultSource()
     ) {
         let metrics = ScreenMetricsProvider.metrics(for: screen)
         self.metrics = metrics
         self.taskActivityDataSource = taskActivityDataSource
+        self.audioPlaybackDataSource = audioPlaybackDataSource
         let overlayState = IslandOverlayState()
         self.overlayState = overlayState
 
@@ -43,17 +48,21 @@ final class IslandPanelController {
 
     deinit {
         taskActivityPollingTask?.cancel()
+        audioPlaybackPollingTask?.cancel()
     }
 
     func show() {
         refreshForCurrentScreen()
         startTaskActivityPolling()
+        startAudioPlaybackPolling()
         panel.orderFrontRegardless()
     }
 
     func hide() {
         taskActivityPollingTask?.cancel()
         taskActivityPollingTask = nil
+        audioPlaybackPollingTask?.cancel()
+        audioPlaybackPollingTask = nil
         panel.orderOut(nil)
     }
 
@@ -87,12 +96,12 @@ final class IslandPanelController {
 
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.isExpanded else { return }
-                withAnimation(.interactiveSpring(response: 0.38, dampingFraction: 0.8, blendDuration: 0)) {
+                withAnimation(self.expandAnimation) {
                     self.overlayState.isExpanded = true
                 }
             }
         } else {
-            withAnimation(.easeOut(duration: 0.12)) {
+            withAnimation(collapseAnimation) {
                 overlayState.isExpanded = false
             }
 
@@ -107,8 +116,20 @@ final class IslandPanelController {
                 )
             }
             collapseWorkItem = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.13, execute: workItem)
+            DispatchQueue.main.asyncAfter(deadline: .now() + animationProfile.collapseCanvasDelay, execute: workItem)
         }
+    }
+
+    private var expandAnimation: Animation {
+        .interactiveSpring(
+            response: animationProfile.expandResponse,
+            dampingFraction: animationProfile.expandDampingFraction,
+            blendDuration: animationProfile.expandBlendDuration
+        )
+    }
+
+    private var collapseAnimation: Animation {
+        .easeOut(duration: animationProfile.collapseDuration)
     }
 
     private func updateRootView() {
@@ -123,6 +144,12 @@ final class IslandPanelController {
         overlayState.taskActivity = nextState
     }
 
+    private func refreshAudioPlaybackState() async {
+        let nextState = await audioPlaybackDataSource.currentState()
+        guard overlayState.audioPlayback != nextState else { return }
+        overlayState.audioPlayback = nextState
+    }
+
     private func startTaskActivityPolling() {
         guard taskActivityPollingTask == nil else { return }
 
@@ -131,6 +158,18 @@ final class IslandPanelController {
                 guard let self else { return }
                 await self.refreshTaskActivityState()
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+    }
+
+    private func startAudioPlaybackPolling() {
+        guard audioPlaybackPollingTask == nil else { return }
+
+        audioPlaybackPollingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.refreshAudioPlaybackState()
+                try? await Task.sleep(nanoseconds: 83_333_333)
             }
         }
     }

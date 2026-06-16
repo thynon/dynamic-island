@@ -12,6 +12,17 @@ enum CodexUsageDataSource {
             .appendingPathComponent(".codex/sessions", isDirectory: true),
         calendar: Calendar = .autoupdatingCurrent
     ) async -> CodexUsageSummary {
+        if let summary = await CCSwitchUsageDataSource.loadSummary(calendar: calendar) {
+            return summary
+        }
+
+        return await fallbackSummary(sessionsDirectory: sessionsDirectory, calendar: calendar)
+    }
+
+    private static func fallbackSummary(
+        sessionsDirectory: URL,
+        calendar: Calendar
+    ) async -> CodexUsageSummary {
         await cache.loadSummary(sessionsDirectory: sessionsDirectory, calendar: calendar)
     }
 
@@ -110,6 +121,7 @@ enum CodexUsageDataSource {
         }
 
         var model = initialModel
+        var previousCumulativeUsage: CodexTokenUsage?
         var events: [CodexUsageEvent] = []
         var remainder = Data()
 
@@ -132,6 +144,7 @@ enum CodexUsageDataSource {
                 processLineData(
                     buffer[lineStart..<newlineIndex],
                     model: &model,
+                    previousCumulativeUsage: &previousCumulativeUsage,
                     events: &events,
                     earliestDate: earliestDate
                 )
@@ -145,6 +158,7 @@ enum CodexUsageDataSource {
             processLineData(
                 remainder[remainder.startIndex..<remainder.endIndex],
                 model: &model,
+                previousCumulativeUsage: &previousCumulativeUsage,
                 events: &events,
                 earliestDate: earliestDate
             )
@@ -156,6 +170,7 @@ enum CodexUsageDataSource {
     private static func processLineData(
         _ lineData: Data.SubSequence,
         model: inout String?,
+        previousCumulativeUsage: inout CodexTokenUsage?,
         events: inout [CodexUsageEvent],
         earliestDate: Date
     ) {
@@ -167,27 +182,53 @@ enum CodexUsageDataSource {
             return
         }
 
-        let parsedLine = autoreleasepool {
-            CodexSessionLogParser.parseLine(line)
+        if let parsedUsage = autoreleasepool(invoking: { CodexSessionLogParser.parseTokenUsageLine(line) }) {
+            let usage: CodexTokenUsage
+            if parsedUsage.isCumulative {
+                usage = deltaUsage(from: previousCumulativeUsage, to: parsedUsage.event.usage)
+                previousCumulativeUsage = parsedUsage.event.usage
+            } else {
+                usage = parsedUsage.event.usage
+            }
+
+            guard !isZeroUsage(usage), parsedUsage.event.timestamp >= earliestDate else {
+                return
+            }
+            events.append(
+                CodexUsageEvent(
+                    timestamp: parsedUsage.event.timestamp,
+                    usage: usage,
+                    model: model
+                )
+            )
+            return
         }
 
-        switch parsedLine {
-            case .metadata(let metadata):
-                model = normalizedModel(metadata.model)
-            case .token(let event):
-                guard event.timestamp >= earliestDate else {
-                    return
-                }
-                events.append(
-                    CodexUsageEvent(
-                        timestamp: event.timestamp,
-                        usage: event.usage,
-                        model: model
-                    )
-                )
-            case nil:
-                return
+        if case .metadata(let metadata)? = autoreleasepool(invoking: { CodexSessionLogParser.parseLine(line) }) {
+            model = normalizedModel(metadata.model)
         }
+    }
+
+    private static func deltaUsage(from previous: CodexTokenUsage?, to current: CodexTokenUsage) -> CodexTokenUsage {
+        guard let previous else {
+            return current
+        }
+
+        return CodexTokenUsage(
+            inputTokens: max(0, current.inputTokens - previous.inputTokens),
+            cachedInputTokens: max(0, current.cachedInputTokens - previous.cachedInputTokens),
+            outputTokens: max(0, current.outputTokens - previous.outputTokens),
+            reasoningOutputTokens: max(0, current.reasoningOutputTokens - previous.reasoningOutputTokens),
+            totalTokens: max(0, current.totalTokens - previous.totalTokens)
+        )
+    }
+
+    private static func isZeroUsage(_ usage: CodexTokenUsage) -> Bool {
+        usage.inputTokens == 0
+            && usage.cachedInputTokens == 0
+            && usage.outputTokens == 0
+            && usage.reasoningOutputTokens == 0
+            && usage.totalTokens == 0
     }
 
     private static func lineDataContainsRelevantUsageMarker(_ lineData: Data.SubSequence) -> Bool {
@@ -287,6 +328,9 @@ fileprivate struct CodexUsageFileLoadResult: Sendable {
 }
 
 private struct CachedCodexUsageFile: Codable, Equatable, Sendable {
+    static let currentParserVersion = 2
+
+    let parserVersion: Int
     let signature: CodexUsageFileSignature
     let events: [CodexUsageEvent]
     let model: String?
@@ -318,6 +362,7 @@ private actor CodexUsageSummaryCache {
             if let cached = cachedFiles[signature.path], cached.signature == signature {
                 let recentEvents = cached.events.filter { $0.timestamp >= earliestDate }
                 nextCache[signature.path] = CachedCodexUsageFile(
+                    parserVersion: CachedCodexUsageFile.currentParserVersion,
                     signature: signature,
                     events: recentEvents,
                     model: cached.model
@@ -331,25 +376,21 @@ private actor CodexUsageSummaryCache {
                 let cached = cachedFiles[signature.path],
                 signature.size > cached.signature.size
             {
-                let offset = cached.signature.size
-                let initialModel = cached.model
                 let result = await Task.detached(priority: .utility) {
                     CodexUsageDataSource.loadEvents(
                         from: fileURL,
-                        since: earliestDate,
-                        startingAt: offset,
-                        initialModel: initialModel
+                        since: earliestDate
                     )
                 }.value
-                let combinedEvents = (cached.events + result.events)
-                    .filter { $0.timestamp >= earliestDate }
+                let recentEvents = result.events.filter { $0.timestamp >= earliestDate }
 
                 nextCache[signature.path] = CachedCodexUsageFile(
+                    parserVersion: CachedCodexUsageFile.currentParserVersion,
                     signature: signature,
-                    events: combinedEvents,
+                    events: recentEvents,
                     model: result.model
                 )
-                events.append(contentsOf: combinedEvents)
+                events.append(contentsOf: recentEvents)
                 continue
             }
 
@@ -361,16 +402,13 @@ private actor CodexUsageSummaryCache {
             }.value
             let recentEvents = result.events.filter { $0.timestamp >= earliestDate }
             nextCache[signature.path] = CachedCodexUsageFile(
+                parserVersion: CachedCodexUsageFile.currentParserVersion,
                 signature: signature,
                 events: recentEvents,
                 model: result.model
             )
             events.append(contentsOf: recentEvents)
         }
-
-        // Also load Claude Desktop usage events from ~/.claude/projects/
-        let claudeEvents = await ClaudeUsageDataSource.loadEventsSince(earliestDate)
-        events.append(contentsOf: claudeEvents)
 
         let shouldPersistCache = nextCache != cachedFiles
         cachedFiles = nextCache
@@ -397,7 +435,9 @@ private actor CodexUsageSummaryCache {
             return
         }
 
-        cachedFiles = persistedCache
+        cachedFiles = persistedCache.filter { _, cached in
+            cached.parserVersion == CachedCodexUsageFile.currentParserVersion
+        }
     }
 
     private func persistCache(_ cache: [String: CachedCodexUsageFile]) {

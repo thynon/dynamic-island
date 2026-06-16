@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 public enum StatusDotAnimationKind: Equatable, Sendable {
     case hidden
@@ -53,24 +54,24 @@ public struct StatusDotBreathingProfile: Equatable, Sendable {
 
     public static let running = StatusDotBreathingProfile(
         isActive: true,
-        minScale: 1.0,
-        maxScale: 1.0,
-        minOpacity: 0,
+        minScale: 0.82,
+        maxScale: 1.18,
+        minOpacity: 0.25,
         maxOpacity: 1.0,
-        minBlurRadius: 2.5,
-        maxBlurRadius: 2.5,
-        duration: 1.8
+        minBlurRadius: 1.2,
+        maxBlurRadius: 4.0,
+        duration: 2.0
     )
 
     public static let warning = StatusDotBreathingProfile(
         isActive: true,
-        minScale: 1.0,
-        maxScale: 1.0,
-        minOpacity: 0,
+        minScale: 0.85,
+        maxScale: 1.15,
+        minOpacity: 0.15,
         maxOpacity: 1.0,
-        minBlurRadius: 2.6,
-        maxBlurRadius: 2.6,
-        duration: 2.2
+        minBlurRadius: 1.0,
+        maxBlurRadius: 3.5,
+        duration: 2.4
     )
 
     public static let error = StatusDotBreathingProfile(
@@ -132,5 +133,102 @@ public enum TaskActivityState: String, CaseIterable, Equatable, Sendable {
         }
 
         self.init(rawValue: normalized)
+    }
+}
+
+public enum CodexTaskActivityHeuristic {
+    private static let terminalEventTypes: Set<String> = [
+        "task_complete",
+        "turn_aborted"
+    ]
+    private static let activeEventTypes: Set<String> = [
+        "task_started"
+    ]
+    private static let transientActivityEventTypes: Set<String> = [
+        "token_count",
+        "agent_message",
+        "tool_call",
+        "function_call",
+        "context_compacted"
+    ]
+    private static let transientActivityWindowSeconds: TimeInterval = 20
+    private static let lifecycleActivityWindowSeconds: TimeInterval = 300
+
+    public static func state(
+        recentEventTypes: [String],
+        secondsSinceLatestWrite: TimeInterval?
+    ) -> TaskActivityState {
+        let normalizedEventTypes = recentEventTypes.map { $0.lowercased() }
+
+        for eventType in normalizedEventTypes.reversed() {
+            if terminalEventTypes.contains(eventType) {
+                return .idle
+            }
+            if activeEventTypes.contains(eventType) {
+                guard
+                    let secondsSinceLatestWrite,
+                    secondsSinceLatestWrite <= lifecycleActivityWindowSeconds
+                else {
+                    return .idle
+                }
+                return .running
+            }
+        }
+
+        guard
+            let secondsSinceLatestWrite,
+            secondsSinceLatestWrite <= transientActivityWindowSeconds,
+            normalizedEventTypes.contains(where: transientActivityEventTypes.contains)
+        else {
+            return .idle
+        }
+
+        return .running
+    }
+}
+
+public enum CodexTaskActivityEvent {
+    public static func eventType(in line: String) -> String? {
+        guard
+            let data = line.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let topLevelType = json["type"] as? String
+        else {
+            return nil
+        }
+
+        switch topLevelType {
+        case "event_msg", "response_item":
+            guard let payload = json["payload"] as? [String: Any] else {
+                return nil
+            }
+            return payload["type"] as? String
+        default:
+            return topLevelType
+        }
+    }
+}
+
+public enum TaskActivityOverridePolicy {
+    public static func effectiveState(
+        _ state: TaskActivityState?,
+        modificationDate: Date?,
+        now: Date = Date(),
+        freshnessSeconds: TimeInterval = 300
+    ) -> TaskActivityState? {
+        guard let state else {
+            return nil
+        }
+
+        guard let modificationDate else {
+            return state
+        }
+
+        let age = now.timeIntervalSince(modificationDate)
+        guard age <= freshnessSeconds else {
+            return nil
+        }
+
+        return state
     }
 }

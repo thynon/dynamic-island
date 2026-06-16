@@ -86,7 +86,7 @@ Use `interactiveSpring(response: 0.38, dampingFraction: 0.8)` for hover and `spr
 - Create: `script/build_and_run.sh`
 - Create: `.codex/environments/environment.toml`
 - Modify: `AGENTS.md`
-- Modify: `CX_MEMORY.md`
+- Modify: `MEMORY.md`
 - Create/Modify: `.gitignore`
 
 - [ ] **Step 1: Add build/run script**

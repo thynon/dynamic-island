@@ -89,6 +89,9 @@ public struct NotchMetrics: Equatable, Sendable {
     public static let defaultClosedStatusDotGuardInset: CGFloat = 2
     public static let defaultClosedStatusDotHaloDiameter: CGFloat = 10
     public static let defaultExpandedStatusDotLeadingInset: CGFloat = 25
+    public static let defaultExpandedAudioWaveformWidth: CGFloat = 128
+    public static let defaultExpandedAudioWaveformHeight: CGFloat = 22
+    public static let defaultExpandedAudioWaveformLeadingInset: CGFloat = 80
     public static let defaultStatusDotDirectionalOvershootOffset: CGFloat = 0
     public static let defaultExpandedContentTopSpacerHeight: CGFloat = 34
     public static let defaultExpandedContentSectionSpacing: CGFloat = 6
@@ -163,6 +166,29 @@ public struct NotchMetrics: Equatable, Sendable {
 
     public var expandedStatusDotCenterY: CGFloat {
         closedStatusDotCenterY
+    }
+
+    public var expandedAudioWaveformSize: CGSize {
+        CGSize(
+            width: Self.defaultExpandedAudioWaveformWidth,
+            height: Self.defaultExpandedAudioWaveformHeight
+        )
+    }
+
+    public var closedAudioWaveformCenterX: CGFloat {
+        expandedAudioWaveformCenterX
+    }
+
+    public var closedAudioWaveformCenterY: CGFloat {
+        closedStatusDotCenterY
+    }
+
+    public var expandedAudioWaveformCenterX: CGFloat {
+        Self.defaultExpandedAudioWaveformLeadingInset + (expandedAudioWaveformSize.width / 2)
+    }
+
+    public var expandedAudioWaveformCenterY: CGFloat {
+        closedAudioWaveformCenterY
     }
 
     public var expandedContentTopSpacerHeight: CGFloat {

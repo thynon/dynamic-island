@@ -161,6 +161,77 @@ private func testStatusDotUsesDirectionalTravelWithoutRebound() {
     expectEqual(metrics.closedStatusDotCenterX - radius >= closedVisibleLeftEdge + metrics.closedStatusDotGuardInset, true, "closed final target remains inside closed shell")
 }
 
+private func testExpandedTopStatusBandDefinesPhysicalRegions() {
+    let metrics = NotchMetrics.preview14Inch
+    let layout = metrics.expandedTopStatusBandLayout
+
+    expectEqual(layout.bandHeight, metrics.closedHeight, "top status band follows physical notch height")
+    expectEqual(layout.leftStatusRegion.maxX <= layout.cameraHousingRegion.minX - layout.guardInset, true, "left status region avoids camera housing")
+    expectEqual(layout.rightInfoRegion.minX >= layout.cameraHousingRegion.maxX + layout.guardInset, true, "right info region avoids camera housing")
+    expectEqual(layout.cameraHousingRegion.width, metrics.cameraHousingWidth, "camera region uses real housing width")
+    expectEqual(layout.cameraHousingRegion.midX, metrics.openWidth / 2, "camera region is centered in expanded island")
+    expectEqual(layout.leftStatusRegion.minX >= metrics.openTopCornerRadius, true, "left status region avoids open shell corner")
+    expectEqual(layout.rightInfoRegion.maxX <= metrics.openWidth - metrics.openTopCornerRadius, true, "right info region avoids open shell corner")
+}
+
+private func testTopStatusBandKeepsGlanceableItemsInApprovedRegions() {
+    let metrics = NotchMetrics.preview14Inch
+    let layout = metrics.expandedTopStatusBandLayout
+    let dotFrame = layout.statusDotFrame
+    let waveformFrame = layout.audioWaveformFrame
+    let costFrame = layout.costBadgeFrame(width: 86, height: 24)
+
+    expectEqual(layout.leftStatusRegion.contains(dotFrame), true, "expanded status dot stays inside left status region")
+    expectEqual(layout.rightInfoRegion.contains(waveformFrame), true, "expanded waveform stays inside right info region")
+    expectEqual(layout.rightInfoRegion.contains(costFrame), true, "top cost badge stays inside right info region")
+    expectEqual(waveformFrame.minX >= layout.cameraHousingRegion.maxX + layout.guardInset, true, "waveform does not enter camera housing")
+    expectEqual(waveformFrame.maxX <= costFrame.minX - 8, true, "waveform leaves room before the cost badge")
+    expectEqual(costFrame.minX >= layout.cameraHousingRegion.maxX + layout.guardInset, true, "cost badge does not enter camera housing")
+    expectEqual(waveformFrame.midY, costFrame.midY, "waveform and cost badge share the same horizontal centerline")
+}
+
+private func testOverlayUsesTopStatusBandContractForTopLaneItems() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Views/IslandOverlayView.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("topStatusBandLayout"), true, "overlay routes top lane placement through layout contract")
+    expectEqual(source.contains("statusDotFrame"), true, "overlay places status dot from top status band contract")
+    expectEqual(source.contains("audioWaveformFrame"), true, "overlay places waveform from top status band contract")
+}
+
+private func testIslandAnimationProfileUsesSingleExpansionRhythm() {
+    let profile = IslandAnimationProfile.default
+
+    expectEqual(profile.expandResponse, 0.38, "expanded shell response uses approved primary rhythm")
+    expectEqual(profile.expandDampingFraction, 0.82, "expanded shell damping keeps island feeling attached")
+    expectEqual(profile.collapseDuration, 0.14, "collapse duration stays quick")
+    expectEqual(profile.attachedElementExpandDuration, 0.34, "attached elements use one expand travel duration")
+    expectEqual(profile.attachedElementCollapseDuration, profile.collapseDuration, "attached elements close with shell")
+    expectEqual(profile.expandedContentScale, 0.88, "expanded content starts from existing approved scale")
+    expectEqual(profile.audioWaveformCollapsedScale, 0.92, "waveform keeps existing approved collapsed scale")
+}
+
+private func testOverlayAndPanelUseUnifiedAnimationProfile() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let overlayURL = projectRoot.appendingPathComponent("Sources/Island/Views/IslandOverlayView.swift")
+    let controllerURL = projectRoot.appendingPathComponent("Sources/Island/Controllers/IslandPanelController.swift")
+    let overlay = (try? String(contentsOf: overlayURL, encoding: .utf8)) ?? ""
+    let controller = (try? String(contentsOf: controllerURL, encoding: .utf8)) ?? ""
+
+    expectEqual(overlay.contains("IslandAnimationProfile.default"), true, "overlay reads the shared animation profile")
+    expectEqual(controller.contains("IslandAnimationProfile.default"), true, "panel controller reads the shared animation profile")
+    expectEqual(overlay.contains(".interactiveSpring(response: 0.38"), false, "overlay no longer hardcodes expand spring")
+    expectEqual(controller.contains(".interactiveSpring(response: 0.38"), false, "panel controller no longer hardcodes expand spring")
+    expectEqual(overlay.contains(".timingCurve(0.18, 0.86, 0.22, 1.0, duration: 0.34)"), false, "attached element timing is not scattered in overlay")
+}
+
 private func testTaskActivityBreathingContracts() {
     let idle = TaskActivityState.idle.breathingProfile
     let running = TaskActivityState.running.breathingProfile
@@ -177,22 +248,21 @@ private func testTaskActivityBreathingContracts() {
     expectEqual(idle.maxOpacity, 0, "idle glow stays hidden")
 
     expectEqual(running.isActive, true, "running task state breathes")
-    expectEqual(running.minScale, 1.0, "running glow does not shrink into an expanding pulse")
-    expectEqual(running.maxScale, 1.0, "running glow keeps a fixed halo size")
-    expectEqual(running.minOpacity, 0, "running breathing fully fades out at the low point")
+    expectEqual(running.minScale < 1.0, true, "running glow contracts at the low point")
+    expectEqual(running.maxScale > 1.0, true, "running glow expands at the bright peak")
+    expectEqual(running.minOpacity > 0, true, "running breathing keeps a faint visible glow")
     expectEqual(running.maxOpacity, 1.0, "running breathing keeps the approved bright peak")
-    expectEqual(running.minBlurRadius, running.maxBlurRadius, "running breathing keeps blur static for low CPU")
-    expectEqual(running.maxBlurRadius, 2.5, "running breathing uses the approved static blur")
-    expectEqual(running.duration, 1.8, "running breathing half-cycle matches the approved version")
+    expectEqual(running.minBlurRadius < running.maxBlurRadius, true, "running breathing softens at the bright peak")
+    expectEqual(running.duration >= 1.8, true, "running breathing stays calm rather than pulsing fast")
 
     expectEqual(thinking, running, "thinking uses running active breathing")
     expectEqual(compacting, running, "context compaction uses running active breathing")
 
     expectEqual(warning.isActive, true, "warning task state breathes")
-    expectEqual(warning.minScale, 1.0, "warning glow does not shrink into an expanding pulse")
-    expectEqual(warning.maxScale, 1.0, "warning glow keeps a fixed halo size")
-    expectEqual(warning.minOpacity, 0, "warning breathing fully fades out at the low point")
-    expectEqual(warning.minBlurRadius, warning.maxBlurRadius, "warning breathing keeps blur static for low CPU")
+    expectEqual(warning.minScale < 1.0, true, "warning glow contracts at the low point")
+    expectEqual(warning.maxScale > 1.0, true, "warning glow expands at the bright peak")
+    expectEqual(warning.minOpacity > 0, true, "warning breathing keeps a faint visible glow")
+    expectEqual(warning.minBlurRadius < warning.maxBlurRadius, true, "warning breathing softens at the bright peak")
     expectEqual(warning.duration > running.duration, true, "warning breathes a little slower than running")
     expectEqual(warning.duration > error.duration, true, "warning stays slower than error pulse")
     expectEqual(warning.maxOpacity, running.maxOpacity, "warning breathing uses the same bright peak")
@@ -213,8 +283,8 @@ private func testTaskActivityBreathingStaysInsideStatusDotClip() {
         let profile = state.breathingProfile
         expectEqual(profile.clipDiameter(for: style), style.renderClipDiameter, "\(state) breathing clip matches halo")
         expectEqual(profile.minScale >= 0, true, "\(state) glow radius never becomes negative")
-        expectEqual(profile.maxScale <= 1.0, true, "\(state) glow radius stays inside halo")
-        expectEqual(profile.maxBlurRadius <= 2.6, true, "\(state) breathing blur remains restrained")
+        expectEqual(profile.maxScale <= 1.2, true, "\(state) glow expansion remains restrained")
+        expectEqual(profile.maxBlurRadius <= style.renderClipDiameter / 2, true, "\(state) breathing blur remains restrained")
     }
 }
 
@@ -232,6 +302,293 @@ private func testStatusDotHostViewUsesOnlySafeHaloFrame() {
     expectEqual(closedLocalFrameMinX >= metrics.closedTopCornerRadius + metrics.closedStatusDotGuardInset, true, "closed host frame stays inside left slot")
     expectEqual(expandedLocalFrameMinX >= metrics.openTopCornerRadius + metrics.closedStatusDotGuardInset, true, "expanded host frame stays inside open shell")
     expectEqual(expandedLocalFrameMaxX <= metrics.expandedStatusDotCenterX + radius, true, "expanded host frame stays clipped to its safe halo")
+}
+
+private func testAudioWaveformUsesMarkedExpandedRightInfoRegion() {
+    let metrics = NotchMetrics.preview14Inch
+    let layout = metrics.expandedTopStatusBandLayout
+    let waveformFrame = layout.audioWaveformFrame
+    let costFrame = layout.costBadgeFrame(width: 86, height: 24)
+
+    expectEqual(metrics.expandedAudioWaveformSize.width >= 120, true, "expanded waveform is wide enough for a real trace")
+    expectEqual(metrics.expandedAudioWaveformSize.width <= 150, true, "expanded waveform does not crowd the camera housing")
+    expectEqual(metrics.expandedAudioWaveformSize.height, 22, "expanded waveform has enough height for a real trace")
+    expectEqual(layout.rightInfoRegion.contains(waveformFrame), true, "expanded waveform stays inside the right info region")
+    expectEqual(waveformFrame.minX >= layout.cameraHousingRegion.maxX + layout.guardInset, true, "expanded waveform avoids the physical camera housing")
+    expectEqual(waveformFrame.maxX <= costFrame.minX - 8, true, "expanded waveform leaves a gap before the cost badge")
+    expectEqual(waveformFrame.minY >= metrics.closedStatusDotGuardInset, true, "expanded waveform avoids top edge")
+    expectEqual(waveformFrame.maxY <= metrics.closedHeight - metrics.closedStatusDotGuardInset, true, "expanded waveform stays inside the top status lane")
+    expectEqual(metrics.expandedAudioWaveformCenterY, metrics.closedAudioWaveformCenterY, "expanded waveform keeps the top status lane")
+}
+
+private func testAudioWaveformUsesContinuousTraceStyle() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Views/AudioWaveformView.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("Path"), true, "audio waveform draws a continuous trace")
+    expectEqual(source.contains(".stroke"), true, "audio waveform uses a stroked line")
+    expectEqual(source.contains("Capsule"), false, "audio waveform is not a vertical bar visualizer")
+    expectEqual(source.contains("baseline"), true, "audio waveform includes a center baseline like the reference")
+}
+
+private func testAudioWaveformDefaultsToStaticLineWithoutAudio() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Views/AudioWaveformView.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("snapshot: AudioPlaybackSnapshot = .idle"), true, "audio waveform defaults to a static line when no audio snapshot is provided")
+    expectEqual(source.contains("case .audioLevels"), true, "audio waveform has a real audio rendering mode")
+    expectEqual(source.contains("case .heartbeat"), false, "audio waveform no longer keeps a heartbeat rendering mode")
+    expectEqual(source.contains("ecgWaveform"), false, "audio waveform no longer keeps an ECG rendering branch")
+    expectEqual(source.contains("ECGWaveformModel"), false, "audio waveform no longer references an ECG model")
+}
+
+private func testAudioWaveformConsumesRealAudioLevels() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Views/AudioWaveformView.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("snapshot: AudioPlaybackSnapshot"), true, "audio waveform accepts a real audio snapshot")
+    expectEqual(source.contains("snapshot.levels"), true, "audio waveform draws from captured audio levels")
+}
+
+private func testMusicWaveformPathDoesNotKeepHeartbeatRendering() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Views/AudioWaveformView.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("audioLevelsWaveform"), true, "music playback uses a dedicated audio waveform branch")
+    expectEqual(source.contains("ecgWaveform"), false, "heartbeat fallback branch is removed")
+    expectEqual(source.contains("ECGWaveformModel"), false, "ECG model usage is removed from the waveform view")
+    expectEqual(source.contains("drawScanHead"), false, "monitor scan head code is removed")
+    expectEqual(source.contains("monitorECGColor"), false, "monitor ECG color is removed")
+    expectEqual(source.contains("let waveA = sin"), true, "only the music branch can add sinusoidal shimmer")
+}
+
+private func testDefaultAudioSnapshotIsIdleStaticLine() {
+    expectEqual(AudioPlaybackSnapshot.defaultFallback, .idle, "default no-music presentation is a static line")
+    expectEqual(AudioPlaybackSnapshot.defaultFallback.presentationMode, .idle, "default no-music presentation uses idle mode")
+    expectEqual(AudioPlaybackSnapshot.defaultFallback.isWaveformActive, false, "default idle fallback does not run continuous animation")
+}
+
+private func testOverlayInitialAudioPlaybackIsIdle() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Views/IslandOverlayView.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        source.contains("@Published var audioPlayback: AudioPlaybackSnapshot = .idle"),
+        true,
+        "real overlay state starts idle to avoid default animation overhead"
+    )
+}
+
+private func testAudioWaveformUsesTimelineForContinuousMotion() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Views/AudioWaveformView.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("TimelineView(.animation"), true, "active audio waveform redraws continuously instead of only when polling state changes")
+    expectEqual(source.contains("timeIntervalSinceReferenceDate"), true, "active audio waveform uses time as the animation phase")
+}
+
+private func testAudioPlaybackStateControlsWaveformActivity() {
+    expectEqual(AudioPlaybackSnapshot.idle.isWaveformActive, false, "idle audio snapshot remains inactive")
+    expectEqual(AudioPlaybackSnapshot(levels: [0.2, -0.1]).isWaveformActive, true, "non-empty audio levels animate waveform")
+    expectEqual(AudioPlaybackSnapshot(levels: []).isWaveformActive, false, "empty audio levels do not animate waveform")
+}
+
+private func testAudioPlaybackSnapshotSeparatesPresentationModeFromDetectedAudio() {
+    expectEqual(AudioPlaybackSnapshot.idle.presentationMode, .idle, "idle snapshot has an explicit idle presentation mode")
+    expectEqual(AudioPlaybackSnapshot(levels: [0.2]).presentationMode, .audioLevels, "real levels use audio-level presentation mode")
+}
+
+private func testAudioPlaybackSourceFallsBackToStaticLineWithoutPlayerProcess() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Support/AudioPlaybackDataSource.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        source.contains("return AudioPlaybackSnapshot.defaultFallback"),
+        true,
+        "privacy-friendly audio source returns the static line default when no player is active"
+    )
+    expectEqual(
+        source.contains("return AudioPlaybackSnapshot.fallbackHeartbeat"),
+        false,
+        "privacy-friendly audio source no longer turns the default no-player state into a heartbeat animation"
+    )
+}
+
+private func testIslandOverlayPassesAudioPlaybackStateToWaveform() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Views/IslandOverlayView.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("@Published var audioPlayback"), true, "overlay state stores audio playback snapshot")
+    expectEqual(source.contains("AudioWaveformView(snapshot: visibleAudioPlayback)"), true, "waveform receives the visible audio snapshot")
+}
+
+private func testIslandOverlayPausesWaveformWhileCollapsed() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Views/IslandOverlayView.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("visibleAudioPlayback"), true, "overlay derives a visible audio state")
+    expectEqual(source.contains("isExpanded ? state.audioPlayback : .idle"), true, "collapsed overlay pauses waveform animation instead of running default ECG")
+    expectEqual(source.contains("AudioWaveformView(snapshot: visibleAudioPlayback)"), true, "waveform receives the visible audio state")
+}
+
+private func testPanelPollsAudioPlaybackStateSeparatelyFromTaskActivity() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Controllers/IslandPanelController.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("audioPlaybackDataSource"), true, "panel has a separate audio playback data source")
+    expectEqual(source.contains("AudioPlaybackDataSourceFactory.defaultSource()"), true, "panel defaults to the privacy-friendly audio source factory")
+    expectEqual(source.contains("refreshAudioPlaybackState"), true, "panel refreshes audio state separately")
+    expectEqual(source.contains("startAudioPlaybackPolling"), true, "panel starts audio playback polling")
+    expectEqual(source.contains("83_333_333"), true, "panel refreshes audio snapshots often enough for real waveform motion")
+}
+
+private func testAudioPlaybackSourceDefaultsToPrivacyFriendlyPlayerStateMode() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Support/AudioPlaybackDataSource.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("AudioPlaybackDataSourceFactory"), true, "audio source factory exists")
+    expectEqual(source.contains("ISLAND_REAL_AUDIO_WAVEFORM"), true, "real system audio capture is opt-in")
+    expectEqual(source.contains("AppleScriptAudioPlaybackDataSource()"), true, "default audio source avoids ScreenCaptureKit sharing indicators")
+    expectEqual(source.contains("cachedState"), true, "player-state detection is cached for high-frequency UI refresh")
+}
+
+private func testAudioPlaybackSourceCanUseCoreAudioProcessTapForRealSamples() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Support/AudioPlaybackDataSource.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("CoreAudioProcessTapAudioPlaybackDataSource"), true, "Core Audio process tap source exists")
+    expectEqual(source.contains("AudioHardwareCreateProcessTap"), true, "real audio source creates a Core Audio process tap")
+    expectEqual(source.contains("kAudioHardwarePropertyTranslatePIDToProcessObject"), true, "real audio source maps player PID to Core Audio process object")
+    expectEqual(source.contains("AudioDeviceCreateIOProcID"), true, "real audio source reads tap audio through an IO proc")
+    expectEqual(source.contains("AudioHardwareDestroyProcessTap"), true, "real audio source destroys the process tap")
+    expectEqual(source.contains("ISLAND_CORE_AUDIO_TAP_WAVEFORM"), true, "Core Audio process tap mode is explicitly selectable")
+}
+
+private func testAudioPlaybackSourceDoesNotAskToLocateMissingPlayers() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Support/AudioPlaybackDataSource.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("NSWorkspace.shared.runningApplications"), true, "player-state detection checks running apps before AppleScript")
+    expectEqual(source.contains("bundleIdentifier"), true, "player-state detection uses bundle identifiers instead of only display names")
+    expectEqual(source.contains("isPlayerRunning"), true, "missing players are skipped before AppleScript can ask the user to locate them")
+}
+
+private func testAudioPlaybackSourceUsesScreenCaptureKitForRealSamples() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Support/AudioPlaybackDataSource.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("import ScreenCaptureKit"), true, "audio playback source uses ScreenCaptureKit")
+    expectEqual(source.contains("SCStreamOutputType.audio"), true, "audio playback source captures system audio samples")
+    expectEqual(source.contains("CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer"), true, "audio playback source reads real PCM sample buffers")
+}
+
+private func testAudioPlaybackSourceReadsActualPCMFormatAndLogsCaptureState() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Support/AudioPlaybackDataSource.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("CMAudioFormatDescriptionGetStreamBasicDescription"), true, "audio source reads the sample buffer audio format")
+    expectEqual(source.contains("kAudioFormatFlagIsFloat"), true, "audio source supports Float32 PCM samples")
+    expectEqual(source.contains("kAudioFormatFlagIsSignedInteger"), true, "audio source supports signed integer PCM samples")
+    expectEqual(source.contains("Logger(subsystem: \"cx.island.mvp\", category: \"audio\")"), true, "audio source logs capture state for permission and sample debugging")
+}
+
+private func testAudioPlaybackSourceRequestsScreenCaptureAccessBeforeStartingStream() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Support/AudioPlaybackDataSource.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("CGPreflightScreenCaptureAccess"), true, "audio source checks ScreenCaptureKit TCC access before starting")
+    expectEqual(source.contains("CGRequestScreenCaptureAccess"), true, "audio source requests ScreenCaptureKit TCC access when needed")
+    expectEqual(source.contains("screen capture permission was not granted"), true, "audio source logs a clear permission denial")
+}
+
+private func testAppBundleDeclaresAppleEventsUsageForMusicDetection() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let scriptURL = projectRoot.appendingPathComponent("script/build_and_run.sh")
+    let source = (try? String(contentsOf: scriptURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("NSAppleEventsUsageDescription"), true, "app bundle explains Apple Events usage for music playback detection")
+    expectEqual(source.contains("NSScreenCaptureUsageDescription"), true, "app bundle explains system audio capture usage for real waveform")
+}
+
+private func testBuildScriptSignsAppBundleForTCCIdentity() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let scriptURL = projectRoot.appendingPathComponent("script/build_and_run.sh")
+    let source = (try? String(contentsOf: scriptURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("ISLAND_CODESIGN_IDENTITY"), true, "build script allows a stable local signing identity")
+    expectEqual(source.contains("security find-identity -v -p codesigning"), true, "build script discovers local signing identities")
+    expectEqual(source.contains("codesign --force --deep --sign \"$CODESIGN_IDENTITY\""), true, "app bundle is signed after Info.plist is written")
+    expectEqual(source.contains("codesign -dv"), true, "build script verifies the signed app identity")
 }
 
 private func testExpandedContentStartsBelowCameraHousingBand() {
@@ -257,6 +614,200 @@ private func testTaskActivityStateParsesOnlyExplicitDebugValues() {
     expectEqual(TaskActivityState(debugValue: ""), nil, "debug state ignores empty values")
 }
 
+private func testPanelDefaultsToCodexTaskActivityState() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Controllers/IslandPanelController.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        source.contains("taskActivityDataSource: any TaskActivityDataSource = CodexTaskActivityDataSource()"),
+        true,
+        "panel defaults to Codex session lifecycle task activity state"
+    )
+    expectEqual(
+        source.contains("ClaudeTaskActivityDataSource"),
+        false,
+        "panel does not infer activity from persistent Codex or Claude app processes"
+    )
+}
+
+private func testCodexTaskActivityDataSourceKeepsFileOverride() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Support/TaskActivityDataSource.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        source.contains("struct CodexTaskActivityDataSource"),
+        true,
+        "Codex task activity data source exists"
+    )
+    expectEqual(
+        source.contains("FileBackedTaskActivityDataSource.readState"),
+        true,
+        "Codex task activity source keeps the explicit file state override"
+    )
+    expectEqual(
+        source.contains("recentEventTypes"),
+        true,
+        "Codex task activity source reads recent session event types"
+    )
+}
+
+private func testCodexUsageDataSourceDoesNotMergeClaudeSessionLogs() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Support/CodexUsageDataSource.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+    let legacyClaudeUsageSourceURL = projectRoot
+        .appendingPathComponent("Sources/Island/Support/ClaudeUsageDataSource.swift")
+
+    expectEqual(
+        FileManager.default.fileExists(atPath: legacyClaudeUsageSourceURL.path),
+        false,
+        "legacy Claude usage source is removed from the app source tree"
+    )
+    expectEqual(
+        source.contains("ClaudeUsageDataSource"),
+        false,
+        "codex usage stats do not silently merge Claude session logs"
+    )
+}
+
+private func testCodexUsageDataSourcePrefersCCSwitchLedger() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Support/CodexUsageDataSource.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        source.contains("CCSwitchUsageDataSource.loadSummary"),
+        true,
+        "codex usage stats prefer the CC Switch usage ledger when available"
+    )
+    expectEqual(
+        source.contains("fallbackSummary"),
+        true,
+        "codex usage stats keep local session logs as fallback"
+    )
+}
+
+private func testCCSwitchUsageDataSourceDefaultsToAllSources() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Support/CCSwitchUsageDataSource.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        source.contains("appType: String? = nil"),
+        true,
+        "CC Switch usage source defaults to the same all-sources scope as the CC Switch dashboard"
+    )
+    expectEqual(
+        source.contains("appType: String = \"codex\""),
+        false,
+        "CC Switch usage source does not force codex-only filtering by default"
+    )
+    expectEqual(
+        source.contains("cacheCreationTokens"),
+        true,
+        "CC Switch usage source includes cache creation tokens in the real token total"
+    )
+    expectEqual(
+        source.contains("effectiveUsageLogFilter"),
+        true,
+        "CC Switch usage source copies the upstream session/proxy dedupe filter"
+    )
+    expectEqual(
+        source.contains("freshInputSQL"),
+        true,
+        "CC Switch usage source copies the upstream fresh-input normalization"
+    )
+    expectEqual(
+        source.contains("inputTokens: freshInputTokens + cachedInputTokens"),
+        true,
+        "CC Switch usage source passes cache-inclusive input tokens for cache hit-rate math"
+    )
+    expectEqual(
+        source.contains("events.append(contentsOf: loadDailyRollupEvents"),
+        false,
+        "CC Switch usage source does not double-count detail logs and daily rollups as events"
+    )
+}
+
+private func testDataPanelShowsTopRightCostBadge() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Views/DataPanelView.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        source.contains("topRightCostBadge"),
+        true,
+        "data panel defines the top-right cost badge"
+    )
+    expectEqual(
+        source.contains("costBadgeVerticalOffset"),
+        true,
+        "cost badge has an explicit vertical offset above the feature switcher"
+    )
+    expectEqual(
+        source.contains("costBadgeVerticalOffset: CGFloat = -30"),
+        true,
+        "cost badge aligns vertically with the top status band centerline"
+    )
+    expectEqual(
+        source.contains("Text(rangedUsageSummary.costSource == .ledger ? \"CCS\" : \"EST\")"),
+        false,
+        "cost badge does not show a CCS or EST source prefix before the amount"
+    )
+}
+
+private func testCodexUsageSummaryComputesCachedInputHitRate() {
+    let calendar = Calendar(identifier: .gregorian)
+    let event = CodexUsageEvent(
+        timestamp: Date(timeIntervalSince1970: 1_789_000_000),
+        usage: CodexTokenUsage(
+            inputTokens: 1_000,
+            cachedInputTokens: 875,
+            outputTokens: 120,
+            reasoningOutputTokens: 0,
+            totalTokens: 1_120
+        )
+    )
+    let summary = CodexUsageSummary.build(events: [event], calendar: calendar, costEstimator: .zero)
+
+    expectEqual(summary.cachedInputHitRate, 0.875, "cached input hit rate uses cached input over total input")
+    expectEqual(CodexUsageSummary.empty.cachedInputHitRate, 0, "empty cached input hit rate is zero")
+}
+
+private func testDataPanelOverviewShowsCacheHitRateInsteadOfEstimatedCostCard() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Views/DataPanelView.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("(\"CACHE HIT\", formatCacheHitRate(summary.cachedInputHitRate))"), true, "overview stats show cache hit rate card in English")
+    expectEqual(source.contains("(\"命中缓存\", formatCacheHitRate(summary.cachedInputHitRate))"), false, "overview stats do not use Chinese cache hit label")
+    expectEqual(source.contains("(\"EST COST\", formatCost(summary.estimatedCost))"), false, "overview stats no longer show estimated cost card")
+    expectEqual(source.contains("formatCacheHitRate"), true, "data panel formats cache hit rate percentage")
+}
+
 private func testTaskActivityUsesApprovedStatusDotAnimationKinds() {
     expectEqual(TaskActivityState.idle.statusDotAnimationKind, .hidden, "idle hides the status dot")
     expectEqual(TaskActivityState.thinking.statusDotAnimationKind, .breathingGlow, "thinking uses green breathing glow")
@@ -264,6 +815,112 @@ private func testTaskActivityUsesApprovedStatusDotAnimationKinds() {
     expectEqual(TaskActivityState.compacting.statusDotAnimationKind, .breathingGlow, "compacting uses green breathing glow")
     expectEqual(TaskActivityState.warning.statusDotAnimationKind, .breathingGlow, "warning uses yellow breathing glow")
     expectEqual(TaskActivityState.error.statusDotAnimationKind, .fastPulse, "error uses fast red pulse")
+}
+
+private func testCodexTaskActivityHeuristicUsesLifecycleEvents() {
+    expectEqual(
+        CodexTaskActivityHeuristic.state(
+            recentEventTypes: ["task_started", "token_count", "function_call"],
+            secondsSinceLatestWrite: 120
+        ),
+        .running,
+        "task started without terminal event stays running"
+    )
+    expectEqual(
+        CodexTaskActivityHeuristic.state(
+            recentEventTypes: ["task_started", "token_count", "function_call"],
+            secondsSinceLatestWrite: 1_200
+        ),
+        .idle,
+        "stale task started without terminal event does not keep breathing forever"
+    )
+    expectEqual(
+        CodexTaskActivityHeuristic.state(
+            recentEventTypes: ["task_started", "token_count", "task_complete"],
+            secondsSinceLatestWrite: 1
+        ),
+        .idle,
+        "task complete stops breathing even when file was just written"
+    )
+    expectEqual(
+        CodexTaskActivityHeuristic.state(
+            recentEventTypes: ["task_started", "turn_aborted"],
+            secondsSinceLatestWrite: 1
+        ),
+        .idle,
+        "turn aborted stops breathing"
+    )
+    expectEqual(
+        CodexTaskActivityHeuristic.state(
+            recentEventTypes: ["token_count"],
+            secondsSinceLatestWrite: 8
+        ),
+        .running,
+        "recent token activity without lifecycle metadata is treated as active"
+    )
+    expectEqual(
+        CodexTaskActivityHeuristic.state(
+            recentEventTypes: ["token_count"],
+            secondsSinceLatestWrite: 45
+        ),
+        .idle,
+        "old token activity does not keep breathing forever"
+    )
+}
+
+private func testCodexTaskActivityEventParsingReadsPayloadEventTypes() {
+    let taskStartedLine = #"{"timestamp":"2026-06-15T02:56:35.514Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}"#
+    let taskCompleteLine = #"{"timestamp":"2026-06-15T02:56:40.514Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1"}}"#
+    let functionCallLine = #"{"timestamp":"2026-06-15T02:56:37.514Z","type":"response_item","payload":{"type":"function_call","name":"exec_command"}}"#
+
+    expectEqual(CodexTaskActivityEvent.eventType(in: taskStartedLine), "task_started", "Codex event parsing reads event_msg payload type")
+    expectEqual(CodexTaskActivityEvent.eventType(in: taskCompleteLine), "task_complete", "Codex event parsing reads terminal payload type")
+    expectEqual(CodexTaskActivityEvent.eventType(in: functionCallLine), "function_call", "Codex event parsing reads response item payload type")
+}
+
+private func testTaskActivityOverridePolicyOnlyUsesFreshManualState() {
+    let now = Date(timeIntervalSinceReferenceDate: 1_000)
+
+    expectEqual(
+        TaskActivityOverridePolicy.effectiveState(
+            .idle,
+            modificationDate: now.addingTimeInterval(-10),
+            now: now,
+            freshnessSeconds: 300
+        ),
+        .idle,
+        "fresh manual idle can force the status dot to stop for verification"
+    )
+    expectEqual(
+        TaskActivityOverridePolicy.effectiveState(
+            .running,
+            modificationDate: now.addingTimeInterval(-10),
+            now: now,
+            freshnessSeconds: 300
+        ),
+        .running,
+        "fresh manual running can force the status dot to breathe for verification"
+    )
+    expectEqual(
+        TaskActivityOverridePolicy.effectiveState(
+            .running,
+            modificationDate: now.addingTimeInterval(-600),
+            now: now,
+            freshnessSeconds: 300
+        ),
+        nil,
+        "stale manual running does not keep the status dot breathing forever"
+    )
+    expectEqual(
+        TaskActivityOverridePolicy.effectiveState(
+            nil,
+            modificationDate: now,
+            now: now,
+            freshnessSeconds: 300
+        ),
+        nil,
+        "missing manual state does not override automatic detection"
+    )
 }
 
 private func testDataPanelMVPUsesApprovedModesAndCadence() {
@@ -621,7 +1278,7 @@ private func testCodexUsageSummaryFiltersByStatsTimeRange() {
     expectEqual(allSummary.requestCount, 2, "all summary request count excludes old history")
 }
 
-private func testCodexUsageParserReadsTokenCountLastUsage() {
+private func testCodexUsageParserPrefersCumulativeTokenUsage() {
     let line = """
     {"timestamp":"2026-06-10T01:24:33.917Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":300,"cached_input_tokens":100,"output_tokens":20,"reasoning_output_tokens":5,"total_tokens":320},"last_token_usage":{"input_tokens":200,"cached_input_tokens":40,"output_tokens":10,"reasoning_output_tokens":3,"total_tokens":210},"model_context_window":950000}}}
     """
@@ -632,11 +1289,29 @@ private func testCodexUsageParserReadsTokenCountLastUsage() {
         Foundation.exit(1)
     }
 
-    expectEqual(event.usage.inputTokens, 200, "parser uses last input tokens")
-    expectEqual(event.usage.cachedInputTokens, 40, "parser uses last cached tokens")
-    expectEqual(event.usage.outputTokens, 10, "parser uses last output tokens")
-    expectEqual(event.usage.reasoningOutputTokens, 3, "parser uses last reasoning tokens")
-    expectEqual(event.usage.totalTokens, 210, "parser uses last total tokens")
+    expectEqual(event.usage.inputTokens, 300, "parser prefers cumulative input tokens")
+    expectEqual(event.usage.cachedInputTokens, 100, "parser prefers cumulative cached tokens")
+    expectEqual(event.usage.outputTokens, 20, "parser prefers cumulative output tokens")
+    expectEqual(event.usage.reasoningOutputTokens, 5, "parser prefers cumulative reasoning tokens")
+    expectEqual(event.usage.totalTokens, 320, "parser prefers cumulative total tokens")
+}
+
+private func testCodexUsageParserFallsBackToLastUsageWhenCumulativeIsEmpty() {
+    let line = """
+    {"timestamp":"2026-06-15T01:07:27.030Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0,"total_tokens":0},"last_token_usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0,"total_tokens":5413}}}}
+    """
+    let parsed = CodexSessionLogParser.parseLine(line)
+
+    guard case let .token(event)? = parsed else {
+        fputs("FAIL: expected fallback token usage event\n", stderr)
+        Foundation.exit(1)
+    }
+
+    expectEqual(event.usage.inputTokens, 0, "fallback keeps empty last input tokens")
+    expectEqual(event.usage.cachedInputTokens, 0, "fallback keeps empty last cached tokens")
+    expectEqual(event.usage.outputTokens, 0, "fallback keeps empty last output tokens")
+    expectEqual(event.usage.reasoningOutputTokens, 0, "fallback keeps empty last reasoning tokens")
+    expectEqual(event.usage.totalTokens, 5413, "fallback keeps last total tokens")
 }
 
 private func testCodexUsageSummaryAggregatesRealDailyUsage() {
@@ -739,12 +1414,50 @@ testClosedStatusDotStaysInsideVisibleLeftSlot()
 testExpandedStatusDotMovesLeftWithoutTouchingOpenShell()
 testStatusDotUsesSoftGlowVisualContract()
 testStatusDotUsesDirectionalTravelWithoutRebound()
+testExpandedTopStatusBandDefinesPhysicalRegions()
+testTopStatusBandKeepsGlanceableItemsInApprovedRegions()
+testOverlayUsesTopStatusBandContractForTopLaneItems()
+testIslandAnimationProfileUsesSingleExpansionRhythm()
+testOverlayAndPanelUseUnifiedAnimationProfile()
 testTaskActivityBreathingContracts()
 testTaskActivityBreathingStaysInsideStatusDotClip()
 testStatusDotHostViewUsesOnlySafeHaloFrame()
+testAudioWaveformUsesMarkedExpandedRightInfoRegion()
+testAudioWaveformUsesContinuousTraceStyle()
+testAudioWaveformDefaultsToStaticLineWithoutAudio()
+testDefaultAudioSnapshotIsIdleStaticLine()
+testOverlayInitialAudioPlaybackIsIdle()
+testAudioWaveformConsumesRealAudioLevels()
+testMusicWaveformPathDoesNotKeepHeartbeatRendering()
+testAudioWaveformUsesTimelineForContinuousMotion()
+testAudioPlaybackStateControlsWaveformActivity()
+testAudioPlaybackSnapshotSeparatesPresentationModeFromDetectedAudio()
+testAudioPlaybackSourceFallsBackToStaticLineWithoutPlayerProcess()
+testIslandOverlayPassesAudioPlaybackStateToWaveform()
+testIslandOverlayPausesWaveformWhileCollapsed()
+testPanelPollsAudioPlaybackStateSeparatelyFromTaskActivity()
+testAudioPlaybackSourceDefaultsToPrivacyFriendlyPlayerStateMode()
+testAudioPlaybackSourceCanUseCoreAudioProcessTapForRealSamples()
+testAudioPlaybackSourceDoesNotAskToLocateMissingPlayers()
+testAudioPlaybackSourceUsesScreenCaptureKitForRealSamples()
+testAudioPlaybackSourceReadsActualPCMFormatAndLogsCaptureState()
+testAudioPlaybackSourceRequestsScreenCaptureAccessBeforeStartingStream()
+testAppBundleDeclaresAppleEventsUsageForMusicDetection()
+testBuildScriptSignsAppBundleForTCCIdentity()
 testExpandedContentStartsBelowCameraHousingBand()
 testTaskActivityStateParsesOnlyExplicitDebugValues()
+testPanelDefaultsToCodexTaskActivityState()
+testCodexTaskActivityDataSourceKeepsFileOverride()
+testCodexUsageDataSourceDoesNotMergeClaudeSessionLogs()
+testCodexUsageDataSourcePrefersCCSwitchLedger()
+testCCSwitchUsageDataSourceDefaultsToAllSources()
+testDataPanelShowsTopRightCostBadge()
+testCodexUsageSummaryComputesCachedInputHitRate()
+testDataPanelOverviewShowsCacheHitRateInsteadOfEstimatedCostCard()
 testTaskActivityUsesApprovedStatusDotAnimationKinds()
+testCodexTaskActivityHeuristicUsesLifecycleEvents()
+testCodexTaskActivityEventParsingReadsPayloadEventTypes()
+testTaskActivityOverridePolicyOnlyUsesFreshManualState()
 testDataPanelMVPUsesApprovedModesAndCadence()
 testDataPanelTooltipPolicyUsesApprovedModes()
 testDataPanelTooltipFormatsTrendAndCalendarDetails()
@@ -760,7 +1473,8 @@ testCalendarHeatmapAllRangeUsesSixMonthWindow()
 testUsageTrendTimelineTodayUsesHourlyBucketsFromMidnight()
 testUsageTrendTimelineAllRangeUsesSixMonthDailyWindow()
 testUsageTrendTimelineUsesDailyBucketsForThirtyDays()
-testCodexUsageParserReadsTokenCountLastUsage()
+testCodexUsageParserPrefersCumulativeTokenUsage()
+testCodexUsageParserFallsBackToLastUsageWhenCumulativeIsEmpty()
 testCodexUsageSummaryAggregatesRealDailyUsage()
 testCodexUsageSummaryFiltersByStatsTimeRange()
 testExpandedBottomChipsHugBottomInnerEdge()

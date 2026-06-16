@@ -5,7 +5,7 @@ import IslandCore
 struct DataPanelView: View {
     @Binding var mode: DataPanelMode
     @State private var feature: IslandFeature = .defaultFeature
-    @State private var statsTimeRange: StatsTimeRange = .all
+    @State private var statsTimeRange: StatsTimeRange = .today
     @State private var usageToday = Date()
     @State private var usageSummary: CodexUsageSummary = .empty
     @State private var isLoadingUsage = true
@@ -20,6 +20,7 @@ struct DataPanelView: View {
     private let headerHeight: CGFloat = 28
     private let contentSpacing: CGFloat = 4
     private let secondaryControlHeight: CGFloat = 24
+    private let costBadgeVerticalOffset: CGFloat = -30
 
     var body: some View {
         VStack(spacing: contentSpacing) {
@@ -71,6 +72,13 @@ struct DataPanelView: View {
 
             FeatureSwitcher(selection: $feature)
                 .frame(width: featureSwitcherReservedWidth, height: 28, alignment: .trailing)
+
+            if feature == .stats {
+                topRightCostBadge
+                    .frame(width: featureSwitcherReservedWidth, height: 24, alignment: .trailing)
+                    .offset(y: costBadgeVerticalOffset)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing)))
+            }
         }
         .frame(maxWidth: .infinity, minHeight: headerHeight, maxHeight: headerHeight, alignment: .top)
     }
@@ -212,11 +220,36 @@ struct DataPanelView: View {
         }
     }
 
+    private var topRightCostBadge: some View {
+        HStack(spacing: 0) {
+            Text(formattedHeaderCost)
+                .font(.system(size: 10.2, weight: .heavy, design: .rounded))
+                .foregroundStyle(rangedUsageSummary.costSource == .ledger ? Color(red: 0.34, green: 0.78, blue: 0.52) : .white.opacity(0.78))
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 24)
+        .background {
+            Capsule(style: .continuous)
+                .fill(Color.white.opacity(0.055))
+                .overlay {
+                    Capsule(style: .continuous)
+                        .strokeBorder(
+                            rangedUsageSummary.costSource == .ledger
+                            ? Color(red: 0.34, green: 0.78, blue: 0.52).opacity(0.24)
+                            : Color.white.opacity(0.12),
+                            lineWidth: 1
+                        )
+                }
+        }
+    }
+
     private var stats: [(String, String)] {
         let summary = rangedUsageSummary
         return [
             ("TOKENS", formatTokens(summary.totalTokens)),
-            ("EST COST", formatCost(summary.estimatedCost)),
+            ("CACHE HIT", formatCacheHitRate(summary.cachedInputHitRate)),
             ("REQ", formatCount(summary.requestCount)),
             ("MODEL", summary.favoriteModel)
         ]
@@ -904,6 +937,19 @@ struct DataPanelView: View {
         }
 
         return String(format: "$%.0f", value)
+    }
+
+    private func formatCacheHitRate(_ value: Double) -> String {
+        String(format: "%.1f%%", min(1, max(0, value)) * 100)
+    }
+
+    private var formattedHeaderCost: String {
+        let cost = max(0, rangedUsageSummary.estimatedCost)
+        if rangedUsageSummary.costSource == .ledger {
+            return String(format: "$%.4f", cost)
+        }
+
+        return String(format: "$%.2f", cost)
     }
 
     private func formatCompact(_ value: Double) -> String {

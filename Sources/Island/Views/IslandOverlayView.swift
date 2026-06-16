@@ -6,6 +6,7 @@ final class IslandOverlayState: ObservableObject {
     @Published var isExpanded = false
     @Published var usesOpenCanvas = false
     @Published var taskActivity: TaskActivityState = .idle
+    @Published var audioPlayback: AudioPlaybackSnapshot = .idle
     @Published var dataPanelMode: DataPanelMode = .defaultMode
 }
 
@@ -13,6 +14,7 @@ struct IslandOverlayView: View {
     let metrics: NotchMetrics
     @ObservedObject var state: IslandOverlayState
     let onExpansionChange: @MainActor (Bool) -> Void
+    private let animationProfile = IslandAnimationProfile.default
 
     init(
         metrics: NotchMetrics,
@@ -53,29 +55,60 @@ struct IslandOverlayView: View {
     }
 
     private var statusDotX: CGFloat {
-        isExpanded ? metrics.expandedStatusDotCenterX : metrics.closedStatusDotCenterX
+        isExpanded ? topStatusBandLayout.statusDotFrame.midX : metrics.closedStatusDotCenterX
     }
 
     private var statusDotY: CGFloat {
-        isExpanded ? metrics.expandedStatusDotCenterY : metrics.closedStatusDotCenterY
+        isExpanded ? topStatusBandLayout.statusDotFrame.midY : metrics.closedStatusDotCenterY
     }
 
     private var statusDotHaloDiameter: CGFloat {
         isExpanded ? metrics.expandedStatusDotHaloDiameter : metrics.closedStatusDotHaloDiameter
     }
 
+    private var audioWaveformX: CGFloat {
+        isExpanded ? topStatusBandLayout.audioWaveformFrame.midX : metrics.closedAudioWaveformCenterX
+    }
+
+    private var audioWaveformY: CGFloat {
+        isExpanded ? topStatusBandLayout.audioWaveformFrame.midY : metrics.closedAudioWaveformCenterY
+    }
+
+    private var visibleAudioPlayback: AudioPlaybackSnapshot {
+        isExpanded ? state.audioPlayback : .idle
+    }
+
+    private var topStatusBandLayout: IslandTopStatusBandLayout {
+        metrics.expandedTopStatusBandLayout
+    }
+
     private var hoverExpandAnimation: Animation {
-        .interactiveSpring(response: 0.38, dampingFraction: 0.8, blendDuration: 0)
+        .interactiveSpring(
+            response: animationProfile.expandResponse,
+            dampingFraction: animationProfile.expandDampingFraction,
+            blendDuration: animationProfile.expandBlendDuration
+        )
     }
 
     private var closeAnimation: Animation {
-        .easeOut(duration: 0.14)
+        .easeOut(duration: animationProfile.collapseDuration)
     }
 
     private var statusDotTravelAnimation: Animation {
-        isExpanded
-            ? .timingCurve(0.18, 0.86, 0.22, 1.0, duration: 0.34)
-            : .timingCurve(0.20, 0.82, 0.22, 1.0, duration: 0.14)
+        let curve = isExpanded
+            ? animationProfile.attachedElementExpandCurve
+            : animationProfile.attachedElementCollapseCurve
+        let duration = isExpanded
+            ? animationProfile.attachedElementExpandDuration
+            : animationProfile.attachedElementCollapseDuration
+
+        return .timingCurve(
+            curve.x1,
+            curve.y1,
+            curve.x2,
+            curve.y2,
+            duration: duration
+        )
     }
 
     private var expandedHorizontalPadding: CGFloat {
@@ -107,6 +140,23 @@ struct IslandOverlayView: View {
                     x: statusDotX,
                     y: statusDotY
                 )
+                .animation(
+                    statusDotTravelAnimation,
+                    value: isExpanded
+                )
+                .zIndex(2)
+
+            AudioWaveformView(snapshot: visibleAudioPlayback)
+                .frame(
+                    width: topStatusBandLayout.audioWaveformFrame.width,
+                    height: topStatusBandLayout.audioWaveformFrame.height
+                )
+                .position(
+                    x: audioWaveformX,
+                    y: audioWaveformY
+                )
+                .opacity(isExpanded ? 1 : 0)
+                .scaleEffect(isExpanded ? 1 : animationProfile.audioWaveformCollapsedScale, anchor: .leading)
                 .animation(
                     statusDotTravelAnimation,
                     value: isExpanded
@@ -156,7 +206,7 @@ struct IslandOverlayView: View {
         .padding(.bottom, metrics.expandedContentBottomGuard)
         .frame(width: shellWidth, height: shellHeight, alignment: .topLeading)
         .opacity(isExpanded ? 1 : 0)
-        .scaleEffect(isExpanded ? 1 : 0.88, anchor: .top)
+        .scaleEffect(isExpanded ? 1 : animationProfile.expandedContentScale, anchor: .top)
         .allowsHitTesting(isExpanded)
     }
 }
