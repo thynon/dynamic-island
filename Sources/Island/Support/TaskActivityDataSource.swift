@@ -1,8 +1,25 @@
 import Foundation
 import IslandCore
 
+struct TaskActivitySnapshot: Equatable, Sendable {
+    let state: TaskActivityState
+    let completionEventID: String?
+
+    init(state: TaskActivityState, completionEventID: String? = nil) {
+        self.state = state
+        self.completionEventID = completionEventID
+    }
+}
+
 protocol TaskActivityDataSource: Sendable {
+    func currentSnapshot() async -> TaskActivitySnapshot
     func currentState() async -> TaskActivityState
+}
+
+extension TaskActivityDataSource {
+    func currentState() async -> TaskActivityState {
+        await currentSnapshot().state
+    }
 }
 
 struct FileBackedTaskActivityDataSource: TaskActivityDataSource {
@@ -16,10 +33,10 @@ struct FileBackedTaskActivityDataSource: TaskActivityDataSource {
         self.stateFileURL = stateFileURL
     }
 
-    func currentState() async -> TaskActivityState {
+    func currentSnapshot() async -> TaskActivitySnapshot {
         let url = stateFileURL
         return await Task.detached(priority: .utility) {
-            Self.readState(from: url) ?? .idle
+            TaskActivitySnapshot(state: Self.readState(from: url) ?? .idle)
         }.value
     }
 
@@ -51,7 +68,7 @@ struct CodexTaskActivityDataSource: TaskActivityDataSource {
         self.stateFileURL = stateFileURL
     }
 
-    func currentState() async -> TaskActivityState {
+    func currentSnapshot() async -> TaskActivitySnapshot {
         let sessionsDirectory = sessionsDirectory
         let stateFileURL = stateFileURL
         return await Task.detached(priority: .utility) {
@@ -61,25 +78,33 @@ struct CodexTaskActivityDataSource: TaskActivityDataSource {
                 explicitState,
                 modificationDate: modificationDate
             ) {
-                return explicitState
+                return TaskActivitySnapshot(state: explicitState)
             }
 
-            return Self.detectCodexSessionState(sessionsDirectory: sessionsDirectory)
+            return Self.detectCodexSessionSnapshot(sessionsDirectory: sessionsDirectory)
         }.value
     }
 
-    private static func detectCodexSessionState(sessionsDirectory: URL) -> TaskActivityState {
+    private static func detectCodexSessionSnapshot(sessionsDirectory: URL) -> TaskActivitySnapshot {
         guard let latestFile = latestSessionFile(in: sessionsDirectory) else {
-            return .idle
+            return TaskActivitySnapshot(state: .idle)
         }
 
         let secondsSinceLatestWrite = latestFile.modificationDate.map {
             max(0, Date().timeIntervalSince($0))
         }
         let eventTypes = recentEventTypes(from: latestFile.url)
-        return CodexTaskActivityHeuristic.state(
+        let state = CodexTaskActivityHeuristic.state(
             recentEventTypes: eventTypes,
             secondsSinceLatestWrite: secondsSinceLatestWrite
+        )
+        return TaskActivitySnapshot(
+            state: state,
+            completionEventID: latestCompletionEventID(
+                eventTypes: eventTypes,
+                fileURL: latestFile.url,
+                modificationDate: latestFile.modificationDate
+            )
         )
     }
 
@@ -142,5 +167,18 @@ struct CodexTaskActivityDataSource: TaskActivityDataSource {
             .split(separator: "\n")
             .suffix(80)
             .compactMap { CodexTaskActivityEvent.eventType(in: String($0)) }
+    }
+
+    private static func latestCompletionEventID(
+        eventTypes: [String],
+        fileURL: URL,
+        modificationDate: Date?
+    ) -> String? {
+        guard eventTypes.last?.lowercased() == "task_complete" else {
+            return nil
+        }
+
+        let modifiedAt = modificationDate?.timeIntervalSinceReferenceDate ?? 0
+        return "\(fileURL.path)#task_complete#\(Int(modifiedAt.rounded()))"
     }
 }

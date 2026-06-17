@@ -43,9 +43,581 @@ private func testFallsBackToApprovedPreviewMetricsWhenScreenDataIsMissing() {
     expectEqual(metrics.closedShellWidth, 245, "fallback closed shell width")
 }
 
+private func testDisplayProfileDerivesMetricsFromScreenSignature() {
+    let signature = DisplaySignature(
+        frameWidth: 1512,
+        frameHeight: 982,
+        safeAreaTopInset: 32,
+        auxiliaryTopLeftWidth: 663,
+        auxiliaryTopRightWidth: 664,
+        backingScaleFactor: 2
+    )
+    let profile = DisplayProfile(signature: signature, measuredAt: Date(timeIntervalSince1970: 0))
+
+    expectEqual(profile.signature, signature, "display profile stores the measured signature")
+    expectEqual(profile.displayKind, .notchedCompact, "fourteen-inch style display uses compact notched profile")
+    expectEqual(profile.metrics.cameraHousingWidth, 185, "display profile derives camera housing width")
+    expectEqual(profile.metrics.closedHeight, 32, "display profile derives closed height")
+    expectEqual(profile.metrics.closedShellWidth, 245, "display profile derives closed shell width")
+    expectEqual(profile.metrics.openWidth, 700, "compact notched display keeps approved open width")
+    expectEqual(profile.metrics.openHeight, 230, "compact notched display keeps approved open height")
+    expectEqual(profile.matches(signature), true, "display profile matches the same signature")
+    expectEqual(
+        profile.matches(
+            DisplaySignature(
+                frameWidth: 1728,
+                frameHeight: 1117,
+                safeAreaTopInset: 32,
+                auxiliaryTopLeftWidth: 771,
+                auxiliaryTopRightWidth: 772,
+                backingScaleFactor: 2
+            )
+        ),
+        false,
+        "display profile invalidates when the display signature changes"
+    )
+}
+
+private func testAdaptsOpenSizeForLargerNotchedMacBookDisplay() {
+    let metrics = NotchMetrics.fromDisplay(
+        frameWidth: 1728,
+        frameHeight: 1117,
+        auxiliaryTopLeftWidth: 771,
+        auxiliaryTopRightWidth: 772,
+        safeAreaTopInset: 32
+    )
+    let profile = DisplayProfile(
+        signature: DisplaySignature(
+            frameWidth: 1728,
+            frameHeight: 1117,
+            safeAreaTopInset: 32,
+            auxiliaryTopLeftWidth: 771,
+            auxiliaryTopRightWidth: 772,
+            backingScaleFactor: 2
+        ),
+        measuredAt: Date(timeIntervalSince1970: 0)
+    )
+
+    expectEqual(metrics.cameraHousingWidth, 185, "larger notched display keeps measured camera housing width")
+    expectEqual(metrics.closedShellWidth, 245, "larger notched display keeps closed shell anchored to camera housing")
+    expectEqual(metrics.openWidth, 778, "larger notched display expands the open panel width from screen size")
+    expectEqual(metrics.openHeight, 235, "larger notched display expands the open panel height from screen size")
+    expectEqual(profile.displayKind, .notchedLarge, "larger notched display is classified separately")
+}
+
+private func testUsesStandardDisplayProfileWithoutCameraHousing() {
+    let metrics = NotchMetrics.fromDisplay(
+        frameWidth: 1440,
+        frameHeight: 900,
+        auxiliaryTopLeftWidth: nil,
+        auxiliaryTopRightWidth: nil,
+        safeAreaTopInset: 0
+    )
+    let profile = DisplayProfile(
+        signature: DisplaySignature(
+            frameWidth: 1440,
+            frameHeight: 900,
+            safeAreaTopInset: 0,
+            auxiliaryTopLeftWidth: nil,
+            auxiliaryTopRightWidth: nil,
+            backingScaleFactor: 2
+        ),
+        measuredAt: Date(timeIntervalSince1970: 0)
+    )
+
+    expectEqual(profile.displayKind, .standardDisplay, "display without camera housing uses standard profile")
+    expectEqual(metrics.openWidth < 700, true, "standard display uses a smaller open panel than notched MacBook profile")
+    expectEqual(metrics.openWidth >= 560, true, "standard display keeps enough width for Stats content")
+    expectEqual(metrics.openHeight, 210, "standard display uses a shallower open panel")
+}
+
+private func testTemporaryFileShelfAddsAndDeduplicatesFileURLs() {
+    let now = Date(timeIntervalSince1970: 100)
+    let firstURL = URL(fileURLWithPath: "/tmp/island-first.txt")
+    let secondURL = URL(fileURLWithPath: "/tmp/island-second.png")
+    var shelf = TemporaryFileShelf(now: now)
+
+    shelf.addFileURLs([firstURL, secondURL, firstURL], now: now)
+
+    expectEqual(shelf.items.count, 2, "temporary shelf deduplicates repeated file URLs")
+    expectEqual(shelf.items.map(\.fileURL), [firstURL, secondURL], "temporary shelf keeps first-seen order")
+    expectEqual(shelf.items[0].displayName, "island-first.txt", "temporary shelf derives display name")
+    expectEqual(shelf.items[0].expiresAt, now.addingTimeInterval(TemporaryFileShelf.itemLifetime), "temporary shelf sets 24h expiry")
+}
+
+private func testTemporaryFileShelfRemovesClearsAndPrunesExpiredItems() {
+    let now = Date(timeIntervalSince1970: 200)
+    let oldURL = URL(fileURLWithPath: "/tmp/island-old.txt")
+    let freshURL = URL(fileURLWithPath: "/tmp/island-fresh.txt")
+    var shelf = TemporaryFileShelf(now: now)
+
+    shelf.addFileURLs([oldURL], now: now)
+    shelf.addFileURLs([freshURL], now: now.addingTimeInterval(60))
+    shelf.pruneExpired(now: now.addingTimeInterval(TemporaryFileShelf.itemLifetime + 1))
+
+    expectEqual(shelf.items.map(\.fileURL), [freshURL], "temporary shelf prunes only expired items")
+
+    shelf.removeItem(id: shelf.items[0].id)
+    expectEqual(shelf.hasItems, false, "temporary shelf removes item by id")
+
+    shelf.addFileURLs([oldURL, freshURL], now: now)
+    shelf.clear()
+    expectEqual(shelf.items.isEmpty, true, "temporary shelf clears all items")
+}
+
+private func testTemporaryFileShelfClassifiesItemsByFileExtension() {
+    let now = Date(timeIntervalSince1970: 300)
+    let samples: [(String, TemporaryShelfFileCategory)] = [
+        ("/tmp/island-photo.PNG", .images),
+        ("/tmp/island-notes.pdf", .documents),
+        ("/tmp/island-budget.xlsx", .spreadsheets),
+        ("/tmp/island-deck.pptx", .presentations),
+        ("/tmp/island-keynote.key", .presentations),
+        ("/tmp/island-archive.zip", .other)
+    ]
+
+    for (path, expectedCategory) in samples {
+        let item = TemporaryShelfItem(
+            fileURL: URL(fileURLWithPath: path),
+            addedAt: now,
+            expiresAt: now.addingTimeInterval(TemporaryFileShelf.itemLifetime)
+        )
+
+        expectEqual(item.category, expectedCategory, "temporary shelf classifies \(path)")
+    }
+}
+
+private func testTemporaryFileShelfFilterMatchesApprovedCategories() {
+    expectEqual(
+        TemporaryFileShelfFilter.allCases.map(\.title),
+        ["All", "Images", "Documents", "Sheets", "Slides", "Other"],
+        "temporary shelf filter exposes the approved compact labels"
+    )
+
+    expectEqual(TemporaryFileShelfFilter.all.matches(.images), true, "all shelf filter shows images")
+    expectEqual(TemporaryFileShelfFilter.all.matches(.documents), true, "all shelf filter shows documents")
+    expectEqual(TemporaryFileShelfFilter.images.matches(.images), true, "images shelf filter shows images")
+    expectEqual(TemporaryFileShelfFilter.images.matches(.documents), false, "images shelf filter hides documents")
+    expectEqual(TemporaryFileShelfFilter.documents.matches(.documents), true, "documents shelf filter shows documents")
+    expectEqual(TemporaryFileShelfFilter.spreadsheets.matches(.spreadsheets), true, "sheets shelf filter shows spreadsheets")
+    expectEqual(TemporaryFileShelfFilter.presentations.matches(.presentations), true, "slides shelf filter shows presentations")
+    expectEqual(TemporaryFileShelfFilter.other.matches(.other), true, "other shelf filter shows other files")
+}
+
+private func testTemporaryFileShelfSelectionSelectsClearsAndRetainsExistingIDs() {
+    var selection = TemporaryFileShelfSelection()
+
+    selection.selectOnly("/tmp/island-a.png")
+    expectEqual(selection.selectedItemIDs, ["/tmp/island-a.png"], "temporary shelf selection stores a single selected item")
+
+    selection.selectOnly("/tmp/island-b.pdf")
+    expectEqual(selection.selectedItemIDs, ["/tmp/island-b.pdf"], "temporary shelf selection replaces previous single selection")
+
+    selection.retainOnly(itemIDs: ["/tmp/island-c.txt"])
+    expectEqual(selection.selectedItemIDs, Set<String>(), "temporary shelf selection drops removed item ids")
+
+    selection.selectOnly("/tmp/island-c.txt")
+    selection.retainOnly(itemIDs: ["/tmp/island-c.txt", "/tmp/island-d.csv"])
+    expectEqual(selection.selectedItemIDs, ["/tmp/island-c.txt"], "temporary shelf selection keeps existing item ids")
+
+    selection.clear()
+    expectEqual(selection.selectedItemIDs, Set<String>(), "temporary shelf selection clears selected ids")
+}
+
+private func testTemporaryFileShelfStoreIsInMemoryOnly() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Support/TemporaryFileShelfStore.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("@MainActor"), true, "temporary file shelf store is main-actor UI state")
+    expectEqual(source.contains("TemporaryFileShelf"), true, "temporary file shelf store wraps the core shelf model")
+    expectEqual(source.contains("display-profile.json"), false, "temporary file shelf store does not reuse display profile persistence")
+    expectEqual(source.contains("write(to:"), false, "temporary file shelf store does not persist dropped files")
+    expectEqual(source.contains("JSONEncoder"), false, "temporary file shelf store has no restart persistence encoder")
+}
+
+private func testIslandTrackingHostingViewAcceptsFileDragging() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Views/IslandTrackingHostingView.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(source.contains("registerForDraggedTypes([.fileURL])"), true, "hosting view registers file URL dragging")
+    expectEqual(source.contains("onFileDragEntered"), true, "hosting view exposes file drag enter callback")
+    expectEqual(source.contains("onFileDragExited"), true, "hosting view exposes file drag exit callback")
+    expectEqual(source.contains("onFileDrop"), true, "hosting view exposes file drop callback")
+}
+
+private func testPanelUsesCompletionFeedbackForFileDragRecognition() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Controllers/IslandPanelController.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    let dragEnteredRange = source.range(of: "private func handleFileDragEntered")
+    let dragExitedRange = source.range(of: "private func handleFileDragExited")
+    let dragEnteredSource = dragEnteredRange.flatMap { start in
+        dragExitedRange.map { end in String(source[start.lowerBound..<end.lowerBound]) }
+    } ?? ""
+
+    expectEqual(dragEnteredSource.contains("triggerFileDropTargetFeedback()"), true, "file drag recognition uses dedicated file-drop feedback")
+    expectEqual(dragEnteredSource.contains("triggerCompletionFeedback()"), false, "file drag recognition does not reuse Codex completion sounds")
+    expectEqual(dragEnteredSource.contains("Task.sleep(nanoseconds: 1_000_000_000)"), false, "file drag recognition no longer waits one second")
+    expectEqual(source.contains("handleFileDragExited"), true, "panel still resets file drag state on drag exit")
+}
+
+private func testFileShelfButtonStaysInsideExpandedLeftSafeBand() {
+    let metrics = NotchMetrics.preview14Inch
+    let layout = metrics.expandedTopStatusBandLayout
+    let buttonFrame = layout.fileShelfButtonFrame(width: 58, height: 22)
+
+    expectEqual(layout.leftStatusRegion.contains(buttonFrame), true, "file shelf button stays inside left safe band")
+    expectEqual(buttonFrame.maxX <= layout.cameraHousingRegion.minX - layout.guardInset, true, "file shelf button avoids camera housing")
+    expectEqual(buttonFrame.minX > layout.statusDotFrame.maxX, true, "file shelf button sits near the camera side instead of the status dot")
+}
+
+private func testIslandOverlayRendersFileShelfOverlayAboveFeatureContent() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let overlayURL = projectRoot.appendingPathComponent("Sources/Island/Views/IslandOverlayView.swift")
+    let shelfViewURL = projectRoot.appendingPathComponent("Sources/Island/Views/TemporaryFileShelfView.swift")
+    let overlay = (try? String(contentsOf: overlayURL, encoding: .utf8)) ?? ""
+    let shelfView = (try? String(contentsOf: shelfViewURL, encoding: .utf8)) ?? ""
+
+    expectEqual(overlay.contains("@Published var fileShelfItems"), true, "overlay state carries temporary file shelf items")
+    expectEqual(overlay.contains("fileShelfButtonFrame"), true, "overlay places the Files button from the top-band layout")
+    expectEqual(overlay.contains("TemporaryFileShelfView"), true, "overlay renders the temporary file shelf view")
+    expectEqual(overlay.contains("isFileShelfOverlayVisible || state.isFileDropTargetActive"), true, "file shelf overlay takes precedence over feature content while active")
+    expectEqual(shelfView.contains("Open"), true, "file shelf view exposes open action")
+    expectEqual(shelfView.contains("Remove"), true, "file shelf view exposes remove action")
+    expectEqual(shelfView.contains("Clear"), true, "file shelf view exposes clear action")
+    expectEqual(shelfView.contains("Done"), true, "file shelf view exposes a way to return to the previous feature page")
+    expectEqual(overlay.contains("onDismissFileShelf"), true, "overlay wires a file shelf dismiss action")
+}
+
+private func testTemporaryFileShelfViewGroupsItemsAndShowsDashedShelfBounds() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let shelfViewURL = projectRoot.appendingPathComponent("Sources/Island/Views/TemporaryFileShelfView.swift")
+    let shelfView = (try? String(contentsOf: shelfViewURL, encoding: .utf8)) ?? ""
+
+    expectEqual(shelfView.contains("private var groupedItems"), true, "file shelf view derives grouped items")
+    expectEqual(shelfView.contains("TemporaryShelfFileCategory.allCases"), true, "file shelf view renders categories in approved order")
+    expectEqual(shelfView.contains("categoryHeader"), true, "file shelf view renders category headers")
+    expectEqual(shelfView.contains("category.title"), true, "file shelf view uses category display titles")
+    expectEqual(shelfView.contains("shelfContentBoundary"), true, "file shelf view wraps content in a single shelf boundary")
+    expectEqual(shelfView.contains("StrokeStyle(lineWidth: 1, dash: [5, 4])"), true, "file shelf view uses a dashed boundary stroke")
+}
+
+private func testTemporaryFileShelfViewExposesSecondLevelFilterBar() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let shelfViewURL = projectRoot.appendingPathComponent("Sources/Island/Views/TemporaryFileShelfView.swift")
+    let shelfView = (try? String(contentsOf: shelfViewURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        shelfView.contains("@State private var selectedFilter: TemporaryFileShelfFilter = .all"),
+        true,
+        "file shelf view stores the selected second-level filter"
+    )
+    expectEqual(
+        shelfView.contains("filterBar"),
+        true,
+        "file shelf view renders a second-level filter bar"
+    )
+    expectEqual(
+        shelfView.contains("TemporaryFileShelfFilter.allCases"),
+        true,
+        "file shelf filter bar uses the approved filter order"
+    )
+    expectEqual(
+        shelfView.contains("filteredItems"),
+        true,
+        "file shelf view derives filtered visible items"
+    )
+    expectEqual(
+        shelfView.contains("selectedFilter.matches($0.category)"),
+        true,
+        "file shelf view filters items by category through the core filter model"
+    )
+    expectEqual(
+        shelfView.contains("filteredGroupedItems"),
+        true,
+        "file shelf view groups the filtered visible items"
+    )
+}
+
+private func testFileShelfOverlayCanDismissAndCollapseAfterButtonOpen() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let controllerURL = projectRoot.appendingPathComponent("Sources/Island/Controllers/IslandPanelController.swift")
+    let controller = (try? String(contentsOf: controllerURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        controller.contains("closeFileShelfOverlay"),
+        true,
+        "panel controller can close the file shelf overlay without removing files"
+    )
+    expectEqual(
+        controller.contains("if self.overlayState.isFileShelfPinnedOpen {\n                return"),
+        true,
+        "file shelf pinned-open state stays resident across mouse exit"
+    )
+    expectEqual(
+        controller.contains("onDismissFileShelf"),
+        true,
+        "panel controller wires the file shelf dismiss action into the overlay"
+    )
+}
+
+private func testFileDragUsesDedicatedAcceptAndCancelFeedback() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let controllerURL = projectRoot.appendingPathComponent("Sources/Island/Controllers/IslandPanelController.swift")
+    let overlayURL = projectRoot.appendingPathComponent("Sources/Island/Views/IslandOverlayView.swift")
+    let controller = (try? String(contentsOf: controllerURL, encoding: .utf8)) ?? ""
+    let overlay = (try? String(contentsOf: overlayURL, encoding: .utf8)) ?? ""
+    let dragEnteredRange = controller.range(of: "private func handleFileDragEntered")
+    let dragExitedRange = controller.range(of: "private func handleFileDragExited")
+    let dragDropRange = controller.range(of: "private func handleFileDrop")
+    let dragEnteredSource = dragEnteredRange.flatMap { start in
+        dragExitedRange.map { end in String(controller[start.lowerBound..<end.lowerBound]) }
+    } ?? ""
+    let dragDropSource = dragDropRange.flatMap { start in
+        controller.range(of: "private func openFileShelfFromButton").map { end in
+            String(controller[start.lowerBound..<end.lowerBound])
+        }
+    } ?? ""
+    let acceptSoundRange = controller.range(of: "private enum FileDragAcceptSound")
+    let cancelSoundRange = controller.range(of: "private enum FileDragCancelSound")
+    let acceptSoundSource = acceptSoundRange.flatMap { start in
+        controller[start.lowerBound...].range(of: "}", options: []).map { end in
+            String(controller[start.lowerBound...end.upperBound])
+        }
+    } ?? ""
+    let cancelSoundSource = cancelSoundRange.flatMap { start in
+        acceptSoundRange.map { end in String(controller[start.lowerBound..<end.lowerBound]) }
+    } ?? ""
+
+    expectEqual(
+        dragEnteredSource.contains("triggerFileDropTargetFeedback()"),
+        true,
+        "file drag enter uses a dedicated file drop feedback path"
+    )
+    expectEqual(
+        overlay.contains("@Published var fileDropFeedbackTrigger"),
+        true,
+        "overlay state carries a file-drop-specific visual trigger"
+    )
+    expectEqual(
+        overlay.contains(".onChange(of: state.fileDropFeedbackTrigger)"),
+        true,
+        "file drop trigger plays the bottom-edge bounce independently from Codex completion"
+    )
+    expectEqual(
+        controller.contains("FileDragAcceptSound.name")
+            && acceptSoundSource.contains("static let name = NSSound.Name(\"Glass\")"),
+        true,
+        "file drag enter plays the previous Glass accept sound"
+    )
+    expectEqual(
+        controller.contains("playFileDragCancelSound()")
+            && controller.contains("FileDragCancelSound.name")
+            && cancelSoundSource.contains("static let name = NSSound.Name(\"Tink\")"),
+        true,
+        "file drag exit or unsuccessful drop plays the current Tink cancellation sound"
+    )
+    expectEqual(
+        dragEnteredSource.contains("triggerCompletionFeedback()"),
+        false,
+        "file drag enter does not reuse Codex completion feedback or its delayed three-sound sequence"
+    )
+    expectEqual(
+        dragEnteredSource.contains("overlayState.isFileShelfPinnedOpen = false")
+            || dragDropSource.contains("overlayState.isFileShelfPinnedOpen = false"),
+        false,
+        "file drag enter/drop does not clear the user-pinned Files state"
+    )
+}
+
+private func testFileShelfSelectionIsWiredThroughOverlayAndController() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let controllerURL = projectRoot.appendingPathComponent("Sources/Island/Controllers/IslandPanelController.swift")
+    let overlayURL = projectRoot.appendingPathComponent("Sources/Island/Views/IslandOverlayView.swift")
+    let controller = (try? String(contentsOf: controllerURL, encoding: .utf8)) ?? ""
+    let overlay = (try? String(contentsOf: overlayURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        overlay.contains("@Published var fileShelfSelectedItemIDs"),
+        true,
+        "overlay state carries selected file shelf item ids"
+    )
+    expectEqual(
+        overlay.contains("selectedItemIDs: state.fileShelfSelectedItemIDs"),
+        true,
+        "overlay passes selected ids into the file shelf view"
+    )
+    expectEqual(
+        controller.contains("TemporaryFileShelfSelection"),
+        true,
+        "panel controller owns the file shelf selection model"
+    )
+    expectEqual(
+        controller.contains("selectShelfItem(id:") && controller.contains("clearShelfSelection()"),
+        true,
+        "panel controller exposes select and clear callbacks"
+    )
+    expectEqual(
+        controller.contains("retainOnly(itemIDs: items.map(\\.id))"),
+        true,
+        "panel controller prunes selection when shelf items change"
+    )
+}
+
+private func testTemporaryFileShelfViewExposesClickSelectionAndEmptyClear() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let shelfViewURL = projectRoot.appendingPathComponent("Sources/Island/Views/TemporaryFileShelfView.swift")
+    let shelfView = (try? String(contentsOf: shelfViewURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        shelfView.contains("selectedItemIDs"),
+        true,
+        "file shelf view receives selected item ids"
+    )
+    expectEqual(
+        shelfView.contains("onSelectItem"),
+        true,
+        "file shelf view exposes click selection callback"
+    )
+    expectEqual(
+        shelfView.contains("onClearSelection"),
+        true,
+        "file shelf view exposes empty-space clear selection callback"
+    )
+    expectEqual(
+        shelfView.contains("isSelected"),
+        true,
+        "file shelf tiles can render a selected state"
+    )
+    expectEqual(
+        shelfView.contains("GeometryReader"),
+        true,
+        "file shelf rectangle selection collects visible geometry"
+    )
+}
+
+private func testTemporaryFileShelfViewPlansRectangleSelectionWithThresholdAndVisibleFrames() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let shelfViewURL = projectRoot.appendingPathComponent("Sources/Island/Views/TemporaryFileShelfView.swift")
+    let shelfView = (try? String(contentsOf: shelfViewURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        shelfView.contains("selectionDragThreshold"),
+        true,
+        "file shelf view defines a drag threshold for rectangle selection"
+    )
+    expectEqual(
+        shelfView.contains("selectionRect"),
+        true,
+        "file shelf view stores the visible selection rectangle"
+    )
+    expectEqual(
+        shelfView.contains("shelfItemFrames"),
+        true,
+        "file shelf view stores visible item frames for hit testing"
+    )
+    expectEqual(
+        shelfView.contains("GeometryReader"),
+        true,
+        "file shelf view uses geometry to collect visible frames"
+    )
+    expectEqual(
+        shelfView.contains("DragGesture"),
+        true,
+        "file shelf view uses a drag gesture for rectangle selection"
+    )
+    expectEqual(
+        shelfView.contains("autoScroll"),
+        false,
+        "file shelf rectangle selection does not auto-scroll in phase 2"
+    )
+}
+
+private func testTemporaryFileShelfViewDragsSelectedItemsTogether() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let shelfViewURL = projectRoot.appendingPathComponent("Sources/Island/Views/TemporaryFileShelfView.swift")
+    let shelfView = (try? String(contentsOf: shelfViewURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        shelfView.contains("draggedItems(for item: TemporaryShelfItem)"),
+        true,
+        "file shelf view computes the items represented by a drag"
+    )
+    expectEqual(
+        shelfView.contains("selectedItemIDs.contains(item.id)"),
+        true,
+        "dragging a selected item uses the current selected ids"
+    )
+    expectEqual(
+        shelfView.contains("dragItemProviders(for item: TemporaryShelfItem)"),
+        true,
+        "file shelf view computes item providers represented by a drag"
+    )
+    expectEqual(
+        shelfView.contains(".onDrag { dragItemProviders(for: item).first ?? NSItemProvider() } preview:"),
+        true,
+        "tile drag keeps a SwiftUI drag preview while delegating multi-file export to AppKit"
+    )
+    expectEqual(
+        shelfView.contains(".onDragItems { dragItemProviders(for: item) }"),
+        true,
+        "tile drag exports each selected file as its own provider for cross-app drops"
+    )
+    expectEqual(
+        shelfView.contains("NSItemProvider(contentsOf: item.fileURL)"),
+        true,
+        "file shelf drag uses file URL item providers accepted by Finder and other apps"
+    )
+    expectEqual(
+        shelfView.contains("NSItemProvider.writingFileURLs"),
+        false,
+        "file shelf no longer packs multiple files into one provider"
+    )
+}
+
 private func testDoesNotShrinkBelowApprovedCameraHousingWhenScreenDataJitters() {
     let metrics = NotchMetrics.fromDisplay(
         frameWidth: 1512,
+        frameHeight: 982,
         auxiliaryTopLeftWidth: 665,
         auxiliaryTopRightWidth: 666,
         safeAreaTopInset: 32
@@ -53,6 +625,60 @@ private func testDoesNotShrinkBelowApprovedCameraHousingWhenScreenDataJitters() 
 
     expectEqual(metrics.cameraHousingWidth, 185, "minimum camera housing width")
     expectEqual(metrics.closedShellWidth, 245, "minimum closed shell width")
+}
+
+private func testScreenMetricsProviderUsesDisplayProfileCache() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let providerURL = projectRoot.appendingPathComponent("Sources/Island/Support/ScreenMetricsProvider.swift")
+    let storeURL = projectRoot.appendingPathComponent("Sources/Island/Support/DisplayProfileStore.swift")
+    let provider = (try? String(contentsOf: providerURL, encoding: .utf8)) ?? ""
+    let store = (try? String(contentsOf: storeURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        store.contains("display-profile.json"),
+        true,
+        "display profile cache is stored as a named json file"
+    )
+    expectEqual(
+        provider.contains("DisplayProfileStore"),
+        true,
+        "screen metrics provider uses the display profile cache"
+    )
+    expectEqual(
+        provider.contains("shouldShowCalibrationCaption"),
+        true,
+        "screen metrics provider reports when first-run calibration should be shown"
+    )
+}
+
+private func testIslandOverlayShowsCalibrationCaptionWhenProfileIsMeasured() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let overlayURL = projectRoot.appendingPathComponent("Sources/Island/Views/IslandOverlayView.swift")
+    let controllerURL = projectRoot.appendingPathComponent("Sources/Island/Controllers/IslandPanelController.swift")
+    let overlay = (try? String(contentsOf: overlayURL, encoding: .utf8)) ?? ""
+    let controller = (try? String(contentsOf: controllerURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        overlay.contains("@Published var calibrationCaption: String?"),
+        true,
+        "overlay state carries an optional calibration caption"
+    )
+    expectEqual(
+        overlay.contains("Calibrating display...") || controller.contains("Calibrating display..."),
+        true,
+        "first-run display measurement shows an English calibration caption"
+    )
+    expectEqual(
+        controller.contains("showCalibrationCaptionIfNeeded(screenProfile.shouldShowCalibrationCaption)"),
+        true,
+        "panel controller shows calibration caption only when a new display profile is measured"
+    )
 }
 
 private func testKeepsStatusSlotPinnedToCameraHousingLeftSide() {
@@ -659,6 +1285,125 @@ private func testCodexTaskActivityDataSourceKeepsFileOverride() {
     )
 }
 
+private func testCodexTaskCompletionEventTriggersIslandBounce() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let taskSourceURL = projectRoot.appendingPathComponent("Sources/Island/Support/TaskActivityDataSource.swift")
+    let controllerURL = projectRoot.appendingPathComponent("Sources/Island/Controllers/IslandPanelController.swift")
+    let overlayURL = projectRoot.appendingPathComponent("Sources/Island/Views/IslandOverlayView.swift")
+    let shapeURL = projectRoot.appendingPathComponent("Sources/Island/Views/IslandShape.swift")
+    let metricsURL = projectRoot.appendingPathComponent("Sources/IslandCore/NotchMetrics.swift")
+    let taskSource = (try? String(contentsOf: taskSourceURL, encoding: .utf8)) ?? ""
+    let controller = (try? String(contentsOf: controllerURL, encoding: .utf8)) ?? ""
+    let overlay = (try? String(contentsOf: overlayURL, encoding: .utf8)) ?? ""
+    let shape = (try? String(contentsOf: shapeURL, encoding: .utf8)) ?? ""
+    let metrics = (try? String(contentsOf: metricsURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        taskSource.contains("TaskActivitySnapshot"),
+        true,
+        "task activity source returns state plus completion trigger metadata"
+    )
+    expectEqual(
+        taskSource.contains("task_complete"),
+        true,
+        "Codex task activity source detects task_complete events"
+    )
+    expectEqual(
+        controller.contains("triggerCompletionFeedback()"),
+        true,
+        "panel controller triggers the island completion feedback"
+    )
+    expectEqual(
+        controller.contains("playSystemCompletionSounds") && controller.contains("static let repeatCount = 3"),
+        true,
+        "panel controller plays three system completion sounds"
+    )
+    expectEqual(
+        overlay.contains("@Published var completionFeedbackTrigger"),
+        true,
+        "island overlay state carries a one-shot completion feedback trigger"
+    )
+    expectEqual(
+        overlay.contains("completionBottomEdgeDrop"),
+        true,
+        "completion feedback moves the closed shell bottom edge"
+    )
+    expectEqual(
+        overlay.contains("completionBounceScale") || overlay.contains("completionShellOffsetY"),
+        false,
+        "completion feedback does not scale or translate the whole shell"
+    )
+    expectEqual(
+        overlay.contains("CompletionBottomEdgeBounce.repeatCount") && overlay.contains("static let repeatCount = 2"),
+        true,
+        "completion feedback bounces twice"
+    )
+    expectEqual(
+        overlay.contains("bottomEdgeDrop: completionBottomEdgeDrop"),
+        true,
+        "closed and expanded shells pass bottom-edge drop into the shape"
+    )
+    expectEqual(
+        shape.contains("bottomEdgeDrop") && shape.contains("let bottomY = restBottomY + max(0, bottomEdgeDrop)"),
+        true,
+        "island shape supports animating only the bottom border"
+    )
+    expectEqual(
+        metrics.contains("closedCompletionFeedbackWindowSize")
+            && metrics.contains("closedCompletionBounceDrop")
+            && metrics.contains("openCompletionFeedbackWindowSize")
+            && controller.contains("metrics.closedCompletionFeedbackWindowSize")
+            && overlay.contains("metrics.openCompletionFeedbackWindowSize.height"),
+        true,
+        "completion feedback uses shared closed and expanded window height allowances"
+    )
+    expectEqual(
+        overlay.contains("metrics.closedCompletionBounceDrop"),
+        true,
+        "completion feedback uses the shared bottom-edge drop distance"
+    )
+    expectEqual(
+        overlay.contains("playCompletionBounce()"),
+        true,
+        "completion feedback stays in the island shell implementation"
+    )
+    expectEqual(
+        controller.contains("NSSound.Name(\"Glass\")"),
+        true,
+        "panel controller uses the macOS Glass system sound"
+    )
+}
+
+private func testStatusMenuCanPreviewCompletionBounce() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let appDelegateURL = projectRoot.appendingPathComponent("Sources/Island/Controllers/AppDelegate.swift")
+    let controllerURL = projectRoot.appendingPathComponent("Sources/Island/Controllers/IslandPanelController.swift")
+    let appDelegate = (try? String(contentsOf: appDelegateURL, encoding: .utf8)) ?? ""
+    let controller = (try? String(contentsOf: controllerURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        appDelegate.contains("Preview Completion Bounce"),
+        true,
+        "status menu exposes a preview action for the completion bounce"
+    )
+    expectEqual(
+        appDelegate.contains("#selector(previewCompletionBounce)"),
+        true,
+        "status menu wires the preview action to AppDelegate"
+    )
+    expectEqual(
+        controller.contains("func previewCompletionBounce()"),
+        true,
+        "panel controller exposes a preview-only completion bounce trigger"
+    )
+}
+
 private func testCodexUsageDataSourceDoesNotMergeClaudeSessionLogs() {
     let projectRoot = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
@@ -1025,6 +1770,63 @@ private func testNearestTrendTooltipPointUsesHorizontalPosition() {
 private func testIslandFeatureUsesApprovedHierarchy() {
     expectEqual(IslandFeature.allCases.map(\.label), ["Status", "Stats", "Tools"], "top-level feature labels")
     expectEqual(IslandFeature.defaultFeature, .stats, "top-level feature defaults to stats")
+}
+
+private func testDataPanelPersistsTopLevelFeatureSelection() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let sourceURL = projectRoot.appendingPathComponent("Sources/Island/Views/DataPanelView.swift")
+    let source = (try? String(contentsOf: sourceURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        source.contains("@AppStorage(\"island.selectedFeature\")"),
+        true,
+        "data panel persists the last selected top-level feature"
+    )
+    expectEqual(
+        source.contains("private var feature: IslandFeature"),
+        true,
+        "data panel derives the selected feature from persisted storage with a default fallback"
+    )
+}
+
+private func testToolsFeatureShowsDisplayProfileDebugPanel() {
+    let projectRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let dataPanelURL = projectRoot.appendingPathComponent("Sources/Island/Views/DataPanelView.swift")
+    let storeURL = projectRoot.appendingPathComponent("Sources/Island/Support/DisplayProfileStore.swift")
+    let dataPanel = (try? String(contentsOf: dataPanelURL, encoding: .utf8)) ?? ""
+    let store = (try? String(contentsOf: storeURL, encoding: .utf8)) ?? ""
+
+    expectEqual(
+        store.contains("func currentProfile() -> DisplayProfile?"),
+        true,
+        "display profile store exposes the current cached profile for the debug panel"
+    )
+    expectEqual(
+        dataPanel.contains("displayProfileDebugPanel"),
+        true,
+        "tools feature renders the display profile debug panel"
+    )
+    expectEqual(
+        dataPanel.contains("Display Profile"),
+        true,
+        "debug panel is labeled for display profile inspection"
+    )
+    expectEqual(
+        dataPanel.contains("DisplayProfileStore.defaultProfileURL.path"),
+        true,
+        "debug panel shows the local display profile cache path"
+    )
+    expectEqual(
+        dataPanel.contains("displayProfileDebugPanel") && !dataPanel.contains("No tools panel yet"),
+        true,
+        "tools feature is no longer an empty placeholder"
+    )
 }
 
 private func testStatsTimeRangeUsesApprovedOrderAndNaturalDayStarts() {
@@ -1405,7 +2207,30 @@ private func testExpandedBottomChipsHugBottomInnerEdge() {
 
 testDerivesApprovedFourteenInchNotchMetrics()
 testFallsBackToApprovedPreviewMetricsWhenScreenDataIsMissing()
+testDisplayProfileDerivesMetricsFromScreenSignature()
+testAdaptsOpenSizeForLargerNotchedMacBookDisplay()
+testUsesStandardDisplayProfileWithoutCameraHousing()
+testTemporaryFileShelfAddsAndDeduplicatesFileURLs()
+testTemporaryFileShelfRemovesClearsAndPrunesExpiredItems()
+testTemporaryFileShelfClassifiesItemsByFileExtension()
+testTemporaryFileShelfFilterMatchesApprovedCategories()
+testTemporaryFileShelfSelectionSelectsClearsAndRetainsExistingIDs()
+testTemporaryFileShelfStoreIsInMemoryOnly()
+testIslandTrackingHostingViewAcceptsFileDragging()
+testPanelUsesCompletionFeedbackForFileDragRecognition()
+testFileShelfButtonStaysInsideExpandedLeftSafeBand()
+testIslandOverlayRendersFileShelfOverlayAboveFeatureContent()
+testTemporaryFileShelfViewGroupsItemsAndShowsDashedShelfBounds()
+testTemporaryFileShelfViewExposesSecondLevelFilterBar()
+testFileShelfOverlayCanDismissAndCollapseAfterButtonOpen()
+testFileDragUsesDedicatedAcceptAndCancelFeedback()
+testFileShelfSelectionIsWiredThroughOverlayAndController()
+testTemporaryFileShelfViewExposesClickSelectionAndEmptyClear()
+testTemporaryFileShelfViewPlansRectangleSelectionWithThresholdAndVisibleFrames()
+testTemporaryFileShelfViewDragsSelectedItemsTogether()
 testDoesNotShrinkBelowApprovedCameraHousingWhenScreenDataJitters()
+testScreenMetricsProviderUsesDisplayProfileCache()
+testIslandOverlayShowsCalibrationCaptionWhenProfileIsMeasured()
 testKeepsStatusSlotPinnedToCameraHousingLeftSide()
 testClosedShellKeepsSymmetricSideSlots()
 testUsesOneTopCornerRadiusForClosedAndOpenStates()
@@ -1448,6 +2273,8 @@ testExpandedContentStartsBelowCameraHousingBand()
 testTaskActivityStateParsesOnlyExplicitDebugValues()
 testPanelDefaultsToCodexTaskActivityState()
 testCodexTaskActivityDataSourceKeepsFileOverride()
+testCodexTaskCompletionEventTriggersIslandBounce()
+testStatusMenuCanPreviewCompletionBounce()
 testCodexUsageDataSourceDoesNotMergeClaudeSessionLogs()
 testCodexUsageDataSourcePrefersCCSwitchLedger()
 testCCSwitchUsageDataSourceDefaultsToAllSources()
@@ -1465,6 +2292,8 @@ testDataPanelTooltipIgnoresPaddingCalendarCells()
 testCalendarHeatmapVisualPolicyImprovesBlackBackgroundContrast()
 testNearestTrendTooltipPointUsesHorizontalPosition()
 testIslandFeatureUsesApprovedHierarchy()
+testDataPanelPersistsTopLevelFeatureSelection()
+testToolsFeatureShowsDisplayProfileDebugPanel()
 testStatsTimeRangeUsesApprovedOrderAndNaturalDayStarts()
 testCalendarHeatmapUsesRealSevenDayRangeWithWeekPadding()
 testCalendarHeatmapTodayRangeUsesOneRealNaturalDate()

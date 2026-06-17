@@ -32,6 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Show Island", action: #selector(showIsland), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Hide Island", action: #selector(hideIsland), keyEquivalent: ""))
         menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Preview Completion Bounce", action: #selector(previewCompletionBounce), keyEquivalent: ""))
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Island", action: #selector(quit), keyEquivalent: "q"))
         menu.items.forEach { $0.target = self }
         item.menu = menu
@@ -45,6 +47,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func hideIsland() {
         panelController?.hide()
+    }
+
+    @objc private func previewCompletionBounce() {
+        panelController?.previewCompletionBounce()
     }
 
     @objc private func quit() {

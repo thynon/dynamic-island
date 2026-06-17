@@ -72,6 +72,17 @@ public struct IslandTopStatusBandLayout: Equatable, Sendable {
             height: resolvedHeight
         )
     }
+
+    public func fileShelfButtonFrame(width: CGFloat, height: CGFloat) -> CGRect {
+        let resolvedWidth = min(max(1, width.rounded()), max(1, leftStatusRegion.width))
+        let resolvedHeight = min(max(1, height.rounded()), max(1, leftStatusRegion.height))
+        return CGRect(
+            x: leftStatusRegion.maxX - resolvedWidth,
+            y: leftStatusRegion.midY - (resolvedHeight / 2),
+            width: resolvedWidth,
+            height: resolvedHeight
+        )
+    }
 }
 
 public extension NotchMetrics {

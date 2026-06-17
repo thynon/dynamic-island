@@ -88,6 +88,8 @@ public struct NotchMetrics: Equatable, Sendable {
     public static let openBottomCornerRadius: CGFloat = 24
     public static let defaultClosedStatusDotGuardInset: CGFloat = 2
     public static let defaultClosedStatusDotHaloDiameter: CGFloat = 10
+    public static let defaultClosedCompletionBounceDrop: CGFloat = 14
+    public static let defaultClosedCompletionBounceSlack: CGFloat = defaultClosedCompletionBounceDrop + 2
     public static let defaultExpandedStatusDotLeadingInset: CGFloat = 25
     public static let defaultExpandedAudioWaveformWidth: CGFloat = 128
     public static let defaultExpandedAudioWaveformHeight: CGFloat = 22
@@ -103,6 +105,8 @@ public struct NotchMetrics: Equatable, Sendable {
     public static let defaultExpandedContentBottomEdgeInset: CGFloat = 2
     public static let defaultExpandedContentBottomCornerClearance: CGFloat = defaultExpandedContentBottomEdgeInset
     public static let defaultExpandedContentBottomGuard: CGFloat = defaultExpandedContentBottomEdgeInset
+    public static let compactNotchedReferenceWidth: CGFloat = 1512
+    public static let compactNotchedReferenceHeight: CGFloat = 982
 
     public let cameraHousingWidth: CGFloat
     public let closedHeight: CGFloat
@@ -239,6 +243,18 @@ public struct NotchMetrics: Equatable, Sendable {
         CGSize(width: closedShellWidth, height: closedHeight)
     }
 
+    public var closedCompletionBounceDrop: CGFloat {
+        Self.defaultClosedCompletionBounceDrop
+    }
+
+    public var closedCompletionFeedbackWindowSize: CGSize {
+        CGSize(width: closedShellWidth, height: closedHeight + Self.defaultClosedCompletionBounceSlack)
+    }
+
+    public var openCompletionFeedbackWindowSize: CGSize {
+        CGSize(width: openWidth, height: openHeight + Self.defaultClosedCompletionBounceSlack)
+    }
+
     public var openWindowSize: CGSize {
         CGSize(width: openWidth, height: openHeight)
     }
@@ -283,22 +299,50 @@ public struct NotchMetrics: Equatable, Sendable {
 
     public static func fromDisplay(
         frameWidth: CGFloat,
+        frameHeight: CGFloat = compactNotchedReferenceHeight,
         auxiliaryTopLeftWidth: CGFloat?,
         auxiliaryTopRightWidth: CGFloat?,
         safeAreaTopInset: CGFloat
     ) -> NotchMetrics {
+        let hasCameraHousing = safeAreaTopInset > 0
+            && auxiliaryTopLeftWidth != nil
+            && auxiliaryTopRightWidth != nil
         let housingWidth: CGFloat
-        if let left = auxiliaryTopLeftWidth, let right = auxiliaryTopRightWidth {
+        if hasCameraHousing, let left = auxiliaryTopLeftWidth, let right = auxiliaryTopRightWidth {
             housingWidth = max(defaultCameraHousingWidth, frameWidth - left - right)
         } else {
             housingWidth = defaultCameraHousingWidth
         }
 
         let height = safeAreaTopInset > 0 ? safeAreaTopInset : defaultClosedHeight
+        let openSize = recommendedOpenSize(
+            frameWidth: frameWidth,
+            frameHeight: frameHeight,
+            hasCameraHousing: hasCameraHousing
+        )
 
         return NotchMetrics(
             cameraHousingWidth: housingWidth,
-            closedHeight: height
+            closedHeight: height,
+            openWidth: openSize.width,
+            openHeight: openSize.height
         )
+    }
+
+    private static func recommendedOpenSize(
+        frameWidth: CGFloat,
+        frameHeight: CGFloat,
+        hasCameraHousing: Bool
+    ) -> CGSize {
+        if hasCameraHousing {
+            let maxWidth = max(openWidth, min(frameWidth - 80, 820))
+            let width = min(maxWidth, max(openWidth, frameWidth * 0.45)).rounded()
+            let height = min(252, max(openHeight, frameHeight * 0.21)).rounded()
+            return CGSize(width: width, height: height)
+        }
+
+        let width = min(680, max(560, frameWidth * 0.38)).rounded()
+        let height = min(230, max(210, frameHeight * 0.20)).rounded()
+        return CGSize(width: width, height: height)
     }
 }

@@ -27,6 +27,210 @@ Each event should use this shape:
 
 ## Events
 
+### 2026-06-17 - fix-file-shelf-selected-drag-provider
+- Reason: User reported that after rectangle-selecting multiple File Shelf items, dragging the selection still exported only one file. Root cause was that each tile's SwiftUI `.onDrag` always returned a provider for only the pressed item and did not consult `selectedItemIDs`.
+- Changed:
+  - `Sources/Island/Views/TemporaryFileShelfView.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Dragging an unselected tile still exports only that tile. Dragging a selected tile now exports all currently selected file URLs through a multi-file `NSItemProvider` helper. This does not remove items from the shelf after drop; remove-on-success remains Phase 3a.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh`; process CPU check after restart showed Island running at about 1.6% CPU shortly after launch.
+- Rollback: Restore the tile `.onDrag` body to a single `NSItemProvider(contentsOf: item.fileURL)` if multi-file selected drag should be disabled.
+
+### 2026-06-17 - complete-file-shelf-phase-2-selection
+- Reason: User asked to continue Phase 2 of the File Shelf roadmap: add selection state, click selection, empty-space clear, and rectangle selection without moving into Phase 3 drag-out removal.
+- Changed:
+  - `docs/superpowers/plans/2026-06-17-file-shelf-phase-2.md`
+  - `Sources/IslandCore/TemporaryFileShelf.swift`
+  - `Sources/Island/Controllers/IslandPanelController.swift`
+  - `Sources/Island/Views/IslandOverlayView.swift`
+  - `Sources/Island/Views/TemporaryFileShelfView.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Added `TemporaryFileShelfSelection` in IslandCore, wired selected item IDs through overlay/controller state, added click-to-select and empty-shelf clear behavior, highlighted selected tiles without changing size, and added rectangle selection over visible item frames with a 5pt threshold and no auto-scroll in Phase 2.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh`; process CPU check after restart showed Island running at about 2.4% CPU shortly after launch.
+- Rollback: Remove `TemporaryFileShelfSelection`, strip selected ID state from overlay/controller/view, and restore the pre-selection File Shelf if Phase 2 should be removed.
+
+### 2026-06-17 - tune-file-shelf-drag-sounds
+- Reason: User approved the File Shelf interaction but clarified the sound mapping: dragging files into Island should use the previous sound, while dragging away or failing to complete the drop should keep the current cancellation sound.
+- Changed:
+  - `Sources/Island/Controllers/IslandPanelController.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: File drag-in accept feedback now uses a one-shot `Glass` sound through `FileDragAcceptSound`; drag cancel/unsuccessful exit continues to use one-shot `Tink` through `FileDragCancelSound`. Visual file-drop bottom-edge feedback remains separate from Codex completion feedback.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh`; process CPU check after restart showed Island running at about 3.5% CPU shortly after launch.
+- Rollback: Change `FileDragAcceptSound.name` back to the prior sound if the accept cue should differ from `Glass`.
+
+### 2026-06-17 - restore-file-shelf-pinning-and-separate-drop-feedback
+- Reason: User clarified that clicking `Files` must keep the File Shelf resident, and the previous fix incorrectly made it collapse on mouse exit. User also reported that file drag-in feedback was still not visible enough and the sound behavior still mixed with Codex completion feedback.
+- Changed:
+  - `Sources/Island/Controllers/IslandPanelController.swift`
+  - `Sources/Island/Views/IslandOverlayView.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: `Files` button mode is resident again: pinned File Shelf ignores mouse exit until the user clicks `Done`, clicks `Files` again, clears/removes all files, or another explicit close path runs. File drag-in now uses a dedicated `fileDropFeedbackTrigger` and one-shot `Pop` accept sound instead of Codex completion's delayed three-Glass sequence. Dragging away before drop uses one `Tink` cancel sound. Drag enter/drop no longer clears `isFileShelfPinnedOpen`, so adding files while the shelf is open preserves resident mode.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh`; process CPU check after restart showed Island running at about 1.5% CPU shortly after launch.
+- Rollback: Restore mouse-exit collapse for `isFileShelfPinnedOpen`, route file drag enter back to `triggerCompletionFeedback()`, and remove `fileDropFeedbackTrigger`, `FileDragAcceptSound`, and the scoped drag feedback tests if the older transient overlay behavior is wanted again.
+
+### 2026-06-17 - fix-file-shelf-return-and-drag-feedback
+- Reason: User found that clicking `Files` trapped the app in the File Shelf overlay, prevented normal shrink behavior, and gave unclear feedback when dragging a file into Island then dragging it away. User also wanted the expanded File Shelf state to show the same bottom-edge q-bounce feedback when a file drag enters.
+- Changed:
+  - `Sources/IslandCore/NotchMetrics.swift`
+  - `Sources/Island/Controllers/IslandPanelController.swift`
+  - `Sources/Island/Views/IslandOverlayView.swift`
+  - `Sources/Island/Views/TemporaryFileShelfView.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: File Shelf now has a `Done` action to return to the previous feature page without deleting temporary files. Clicking the active `Files` button toggles the overlay closed. Mouse exit no longer gets blocked by `isFileShelfPinnedOpen`, so the island can shrink normally. Drag-enter still triggers completion-style bounce, expanded state now allows the bottom edge to bounce, and drag-exit before drop cancels pending completion sounds and plays a distinct `Tink` cancel sound once.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh`; process CPU check after restart showed Island running at about 2.0% CPU shortly after launch.
+- Rollback: Remove `onDismissFileShelf`/`Done`, restore the pinned-open mouse-exit guard, change expanded `bottomEdgeDrop` back to zero, remove `openCompletionFeedbackWindowSize`, and remove `FileDragCancelSound` if the File Shelf should return to the previous modal behavior.
+
+### 2026-06-17 - complete-file-shelf-phase-1-categories
+- Reason: User approved Phase 1 of the File Shelf roadmap: categorize temporary files so images, documents, spreadsheets, presentations, and other files are no longer mixed together, and show a dashed visible shelf range.
+- Changed:
+  - `docs/superpowers/plans/2026-06-17-file-shelf-phase-1.md`
+  - `Sources/IslandCore/TemporaryFileShelf.swift`
+  - `Sources/Island/Views/TemporaryFileShelfView.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: `TemporaryShelfItem` now exposes `category` from normalized file extensions. The shelf view renders non-empty category sections in the approved order, shows each category count, and wraps the shelf content in a dashed rounded boundary while preserving Open, Remove, Clear, and drag-out behavior.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh`; process CPU check after launch showed Island running at about 3.0% CPU shortly after restart.
+- Rollback: Remove `TemporaryShelfFileCategory` and `TemporaryShelfItem.category`, restore the single mixed `LazyVGrid` in `TemporaryFileShelfView`, and remove the Phase 1 tests if returning to an ungrouped shelf.
+
+### 2026-06-17 - replace-file-shelf-drag-delay-with-completion-feedback
+- Reason: User wanted to remove the 1s wait before file shelf drag recognition and instead use the existing Codex completion-style bottom bounce plus notification sound as the feedback cue.
+- Changed:
+  - `Sources/Island/Controllers/IslandPanelController.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: File drag enter now immediately opens the file shelf overlay, marks the drop target active, and calls `triggerCompletionFeedback()` so the same bottom-edge bounce and Glass sound sequence is reused. The old file drag hover task and drag-specific 1s delay were removed.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh`; process CPU check after launch.
+- Rollback: Reintroduce a drag hover task in `handleFileDragEntered` if delayed recognition is preferred again, and remove the drag-enter call to `triggerCompletionFeedback()`.
+
+### 2026-06-17 - add-temporary-file-shelf-overlay
+- Reason: User wanted a Mac notch-style temporary file shelf: dragging files to the notch and pausing about 1s should open a dedicated file shelf overlay, with a `Files` button in the expanded top-left safe band near the camera housing when temporary files exist.
+- Changed:
+  - `docs/superpowers/specs/2026-06-17-file-shelf-overlay-design.md`
+  - `docs/superpowers/plans/2026-06-17-file-shelf-overlay.md`
+  - `Sources/IslandCore/TemporaryFileShelf.swift`
+  - `Sources/IslandCore/IslandTopStatusBandLayout.swift`
+  - `Sources/Island/Support/TemporaryFileShelfStore.swift`
+  - `Sources/Island/Views/IslandTrackingHostingView.swift`
+  - `Sources/Island/Views/IslandOverlayView.swift`
+  - `Sources/Island/Views/TemporaryFileShelfView.swift`
+  - `Sources/Island/Controllers/IslandPanelController.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+- Result: Added an in-memory-only file shelf with 24h expiry, file URL dedupe, drag-hover delayed expansion, shelf overlay precedence over feature content, click-to-open/remove/clear actions, drag-out item providers, and a safe-band `Files` button placed from `IslandTopStatusBandLayout.fileShelfButtonFrame`.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh`; process CPU check after launch.
+- Rollback: Remove the temporary shelf model/store/view, remove file-drag callbacks from `IslandTrackingHostingView`, remove file shelf state/actions from `IslandOverlayView` and `IslandPanelController`, and remove `fileShelfButtonFrame` from `IslandTopStatusBandLayout`.
+
+### 2026-06-16 - refine-completion-bounce-selected-shell-only
+- Reason: User clarified the completion animation should be the default closed island's bottom border bouncing downward, not the whole shell moving or scaling. The small status dot should not move with it, the bounce should run twice, and the notification sound should still play three times.
+- Changed:
+  - `Sources/IslandCore/NotchMetrics.swift`
+  - `Sources/Island/Controllers/IslandPanelController.swift`
+  - `Sources/Island/Views/IslandShape.swift`
+  - `Sources/Island/Views/IslandOverlayView.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+- Result: Completion feedback now animates `IslandShape.bottomEdgeDrop` only in the closed state. The top edge, width, status dot, and attached content remain fixed, while the closed shell bottom border drops and returns twice. `NotchMetrics` owns the shared bounce drop and closed-state window slack. The existing three Glass sound playback remains unchanged.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh`; triggered `Preview Completion Bounce` from the status-bar menu; screenshot sampling showed the detected bottom edge moving from about `65` to `89/90` and returning to `65`.
+- Rollback: Set `bottomEdgeDrop` to `0`, remove `closedCompletionBounceDrop`/`closedCompletionFeedbackWindowSize`, and return the closed panel size to `closedWindowSize` if bottom-border feedback should be disabled.
+
+### 2026-06-16 - replace-completion-sweep-with-island-bounce
+- Reason: User could not see the menu-bar line sweep after repeated attempts and chose a clearer completion cue: the collapsed island should bounce a few times, then play the system notification sound three times.
+- Changed:
+  - `Sources/Island/Controllers/AppDelegate.swift`
+  - `Sources/Island/Controllers/IslandPanelController.swift`
+  - `Sources/Island/Views/IslandOverlayView.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - Removed `Sources/Island/Controllers/TaskCompletionSweepWindowController.swift`
+  - Removed `Sources/Island/Views/TaskCompletionSweepView.swift`
+- Result: Codex `task_complete` events and the status-bar preview now trigger the island shell itself to bounce three times and play the macOS Glass sound three times. The unreliable full-width white line sweep overlay is removed.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh`.
+- Rollback: Restore the removed sweep controller/view and route completion triggers back to the full-width overlay if the line sweep is wanted again.
+
+### 2026-06-16 - move-completion-sweep-to-full-width-top-overlay
+- Reason: User said the first sweep effect was still too small and not the menu-bar-wide completion sweep they wanted.
+- Changed:
+  - `Sources/Island/Controllers/IslandPanelController.swift`
+  - `Sources/Island/Controllers/TaskCompletionSweepWindowController.swift`
+  - `Sources/Island/Controllers/AppDelegate.swift`
+  - `Sources/Island/Views/IslandOverlayView.swift`
+  - `Sources/Island/Views/TaskCompletionSweepView.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: The completion sweep is now driven by a dedicated transparent top overlay window spanning the full screen width. The overlay ignores mouse events, plays a one-shot left/right convergence toward the screen center, flashes briefly at the center, and then disappears. Menu preview and real Codex completion now share the same full-width trigger path.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh`.
+- Rollback: Remove `TaskCompletionSweepWindowController` and restore the sweep to the island window if the full-width overlay should be disabled.
+
+### 2026-06-16 - add-menu-preview-for-completion-sweep
+- Reason: User wanted a status-bar menu item to manually trigger the Codex completion sweep effect for visual verification.
+- Changed:
+  - `Sources/Island/Controllers/AppDelegate.swift`
+  - `Sources/Island/Controllers/IslandPanelController.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Added a `Preview Completion Sweep` status-bar menu item that calls a preview-only controller method. It increments a local preview ID and replays the one-shot sweep without changing Codex task state or cached display profile data.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh`.
+- Rollback: Remove the menu item and `previewCompletionSweep()` if the manual preview trigger is no longer needed.
+
+### 2026-06-16 - add-codex-task-completion-sweep
+- Reason: User wanted a menu-bar sweep completion effect: white lines from both sides converge toward the camera-housing center, briefly flash, then all lines disappear. The effect must trigger only when a Codex task completes.
+- Changed:
+  - `Sources/Island/Support/TaskActivityDataSource.swift`
+  - `Sources/Island/Controllers/IslandPanelController.swift`
+  - `Sources/Island/Views/IslandOverlayView.swift`
+  - `Sources/Island/Views/TaskCompletionSweepView.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Added `TaskActivitySnapshot` with an optional `completionEventID`, derived from latest Codex `task_complete` events. `IslandPanelController` forwards new completion IDs once to `IslandOverlayState`, and `TaskCompletionSweepView` plays a one-shot two-sided white sweep with a small center flash before fading out.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh`; injected a temporary Codex JSONL `task_started`/`task_complete` preview event, then removed it; Island CPU returned near idle after the effect.
+- Rollback: Remove `TaskCompletionSweepView`, restore `TaskActivityDataSource` to state-only polling, and stop forwarding `completionSweepID` if the completion animation should be disabled.
+
+### 2026-06-16 - add-display-profile-debug-tools-panel
+- Reason: User said there are three display adaptation phases and approved the final phase, then asked to run through the project and identify remaining optimization needs.
+- Changed:
+  - `Sources/Island/Views/DataPanelView.swift`
+  - `Sources/Island/Support/DisplayProfileStore.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: The `Tools` top-level feature is no longer an empty placeholder. It now shows a compact Display Profile debug panel with profile kind, closed/open dimensions, camera housing width, frame size, safe top inset, auxiliary left/right widths, backing scale, and the local `display-profile.json` cache path. `DisplayProfileStore` exposes `currentProfile()` for the panel.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh`; visual screenshot attempt confirmed the app stays collapsed until hover, so the panel is validated by source checks and build/runtime status.
+- Rollback: Change the `tools` branch in `DataPanelView.featureContent` back to the placeholder and remove `DisplayProfileStore.currentProfile()` if the debug panel should be removed.
+
+### 2026-06-16 - add-display-adaptation-profile-kinds
+- Reason: User approved the next phase after first-run display calibration: use measured display data to adapt beyond the 14-inch MacBook Pro baseline.
+- Changed:
+  - `Sources/IslandCore/NotchMetrics.swift`
+  - `Sources/IslandCore/DisplayProfile.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Added `DisplayProfileKind` with `notchedCompact`, `notchedLarge`, and `standardDisplay`. Compact notched displays keep the approved 14-inch `700x230` expanded shell; larger notched displays scale the expanded shell from screen size; non-notched/standard displays use a smaller top panel profile. The cached display profile now stores `displayKind`.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh`; confirmed current 14-inch cache rewrote with `displayKind: notchedCompact`, `openWidth: 700`, and `openHeight: 230`.
+- Rollback: Remove `DisplayProfileKind`, return `NotchMetrics.fromDisplay` to fixed `openWidth/openHeight`, and delete the local `display-profile.json` if profile-kind adaptation should be disabled.
+
+### 2026-06-16 - add-display-calibration-profile-cache
+- Reason: User wanted first launch to show a small English loading/calibration caption below the camera housing while the app measures display data, then cache those measurements locally so later launches do not repeat the visible loading step on the same display.
+- Changed:
+  - `Sources/IslandCore/DisplayProfile.swift`
+  - `Sources/Island/Support/DisplayProfileStore.swift`
+  - `Sources/Island/Support/ScreenMetricsProvider.swift`
+  - `Sources/Island/Controllers/IslandPanelController.swift`
+  - `Sources/Island/Views/IslandOverlayView.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+- Result: Added a Codable display signature/profile model, persisted `~/Library/Application Support/Island/display-profile.json`, and made `ScreenMetricsProvider` prefer a matching cached profile. When a profile is newly measured, the overlay briefly shows `Calibrating display...` below the closed island; matching cached launches skip the caption and reuse cached metrics.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh`; confirmed `display-profile.json` was created; restarted again and confirmed the profile SHA-256 hash stayed unchanged on cache hit; Island process settled near idle CPU after startup.
+- Rollback: Remove the display profile model/store, return `ScreenMetricsProvider.metrics(for:)` to direct runtime measurement, and delete `~/Library/Application Support/Island/display-profile.json` if cached display calibration should be disabled.
+
+### 2026-06-16 - persist-selected-top-level-feature
+- Reason: User asked the app to remember the last selected top-level feature instead of always opening `Stats`.
+- Changed:
+  - `Sources/Island/Views/DataPanelView.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+- Result: `Status / Stats / Tools` selection is stored with `@AppStorage("island.selectedFeature")`; the app restores the last valid selection and falls back to `Stats` when the stored value is invalid or missing.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh`.
+- Rollback: Replace the persisted raw value with `@State private var feature: IslandFeature = .defaultFeature` if the app should always start on `Stats`.
+
 ### 2026-06-16 - save-clean-project-baseline
 - Reason: User asked to overwrite the remaining side-terminal changes and save the cleanest current project state.
 - Changed:

@@ -4,7 +4,7 @@ import IslandCore
 
 struct DataPanelView: View {
     @Binding var mode: DataPanelMode
-    @State private var feature: IslandFeature = .defaultFeature
+    @AppStorage("island.selectedFeature") private var selectedFeatureRawValue = IslandFeature.defaultFeature.rawValue
     @State private var statsTimeRange: StatsTimeRange = .today
     @State private var usageToday = Date()
     @State private var usageSummary: CodexUsageSummary = .empty
@@ -15,12 +15,22 @@ struct DataPanelView: View {
     @State private var calendarTooltip: PanelTooltip?
     @State private var calendarHoverToken = UUID()
     @State private var pendingCalendarTooltipID: String?
+    @State private var displayProfile = DisplayProfileStore().currentProfile()
 
     private let featureSwitcherReservedWidth: CGFloat = 150
     private let headerHeight: CGFloat = 28
     private let contentSpacing: CGFloat = 4
     private let secondaryControlHeight: CGFloat = 24
     private let costBadgeVerticalOffset: CGFloat = -30
+
+    private var feature: IslandFeature {
+        get {
+            IslandFeature(rawValue: selectedFeatureRawValue) ?? .defaultFeature
+        }
+        nonmutating set {
+            selectedFeatureRawValue = newValue.rawValue
+        }
+    }
 
     var body: some View {
         VStack(spacing: contentSpacing) {
@@ -70,7 +80,12 @@ struct DataPanelView: View {
             }
             .padding(.trailing, featureSwitcherReservedWidth)
 
-            FeatureSwitcher(selection: $feature)
+            FeatureSwitcher(
+                selection: Binding(
+                    get: { feature },
+                    set: { feature = $0 }
+                )
+            )
                 .frame(width: featureSwitcherReservedWidth, height: 28, alignment: .trailing)
 
             if feature == .stats {
@@ -91,7 +106,7 @@ struct DataPanelView: View {
             case .stats:
                 statsContent
             case .tools:
-                emptyFeaturePlaceholder(title: "Tools", subtitle: "No tools panel yet")
+                displayProfileDebugPanel
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -110,6 +125,144 @@ struct DataPanelView: View {
                     .opacity(mode == .all ? 0.86 : 1)
                     .transition(.opacity)
             }
+        }
+    }
+
+    private var displayProfileDebugPanel: some View {
+        let profile = displayProfile
+        return VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Display Profile")
+                    .font(.system(size: 12, weight: .heavy, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.88))
+
+                Spacer()
+
+                Text(profile?.displayKind.rawValue ?? "uncached")
+                    .font(.system(size: 8.6, weight: .bold, design: .rounded))
+                    .foregroundStyle(.black.opacity(0.82))
+                    .padding(.horizontal, 7)
+                    .frame(height: 18)
+                    .background {
+                        Capsule(style: .continuous)
+                            .fill(Color.white.opacity(0.88))
+                    }
+            }
+
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3),
+                spacing: 6
+            ) {
+                debugMetric("CLOSED", profile.map { "\(Int($0.closedShellWidth))x\(Int($0.closedHeight))" } ?? "--")
+                debugMetric("OPEN", profile.map { "\(Int($0.openWidth))x\(Int($0.openHeight))" } ?? "--")
+                debugMetric("CAMERA", profile.map { "\(Int($0.cameraHousingWidth))pt" } ?? "--")
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                debugRow("Frame", profile.map { "\(Int($0.signature.frameWidth))x\(Int($0.signature.frameHeight))" } ?? "--")
+                debugRow("Safe top", profile.map { "\(Int($0.signature.safeAreaTopInset))pt" } ?? "--")
+                debugRow("Aux left / right", profile.map { "\(formatOptionalInt($0.signature.auxiliaryTopLeftWidth)) / \(formatOptionalInt($0.signature.auxiliaryTopRightWidth))" } ?? "--")
+                debugRow("Scale", profile.map { String(format: "%.1fx", $0.signature.backingScaleFactor) } ?? "--")
+                debugRow("Cache", DisplayProfileStore.defaultProfileURL.path)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(red: 0.025, green: 0.028, blue: 0.034))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.09), lineWidth: 1)
+                }
+        }
+        .onAppear {
+            displayProfile = DisplayProfileStore().currentProfile()
+        }
+    }
+
+    private func debugMetric(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label)
+                .font(.system(size: 6.8, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.42))
+                .lineLimit(1)
+
+            Text(value)
+                .font(.system(size: 12, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white.opacity(0.92))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 34)
+        .padding(.horizontal, 7)
+        .background {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.white.opacity(0.08))
+        }
+    }
+
+    private func statusModuleChip(_ title: String, isActive: Bool) -> some View {
+        Text(title)
+            .font(.system(size: 8.4, weight: .heavy, design: .rounded))
+            .foregroundStyle(isActive ? .black.opacity(0.86) : .white.opacity(0.42))
+            .lineLimit(1)
+            .minimumScaleFactor(0.72)
+            .padding(.horizontal, 8)
+            .frame(height: 20)
+            .background {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(isActive ? Color.white.opacity(0.88) : Color.white.opacity(0.045))
+            }
+    }
+
+    private func statusMetricTile(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label)
+                .font(.system(size: 6.7, weight: .black, design: .rounded))
+                .foregroundStyle(.white.opacity(0.35))
+                .lineLimit(1)
+
+            Text(value.isEmpty ? "--" : value)
+                .font(.system(size: 10.2, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white.opacity(0.80))
+                .lineLimit(1)
+                .minimumScaleFactor(0.58)
+        }
+        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.white.opacity(0.052))
+        }
+    }
+
+    private func statusMiniPill(_ label: String, _ value: String) -> some View {
+        Text("\(label) \(value)")
+            .font(.system(size: 7.3, weight: .bold, design: .rounded))
+            .foregroundStyle(.white.opacity(0.54))
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .frame(height: 16)
+            .background {
+                Capsule(style: .continuous)
+                    .fill(Color.white.opacity(0.055))
+            }
+    }
+
+    private func debugRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(label)
+                .font(.system(size: 7.2, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.42))
+                .frame(width: 68, alignment: .leading)
+
+            Text(value)
+                .font(.system(size: 8.4, weight: .semibold, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.76))
+                .lineLimit(1)
+                .minimumScaleFactor(0.55)
         }
     }
 
@@ -941,6 +1094,13 @@ struct DataPanelView: View {
 
     private func formatCacheHitRate(_ value: Double) -> String {
         String(format: "%.1f%%", min(1, max(0, value)) * 100)
+    }
+
+    private func formatOptionalInt(_ value: Double?) -> String {
+        guard let value else {
+            return "--"
+        }
+        return "\(Int(value))pt"
     }
 
     private var formattedHeaderCost: String {
