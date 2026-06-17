@@ -27,6 +27,30 @@ Each event should use this shape:
 
 ## Events
 
+### 2026-06-17 - restore-expanded-island-to-pre-size-change
+- Reason: User decided to roll back the expanded island size adjustment and return to the version before the `900x205` layout tuning.
+- Changed:
+  - `Sources/IslandCore/NotchMetrics.swift`
+  - `Sources/IslandCore/DisplayProfile.swift`
+  - `Sources/Island/Views/TemporaryFileShelfView.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Expanded island sizing is back on the previous `700x230` contract, the old display-profile cache behavior is restored, and File Shelf keeps the second-stage filter/multidrag work without the compact 4-column density tuning.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; deleted stale `~/Library/Application Support/Island/display-profile.json`; restarted app and confirmed cache regenerated to `700x230`; CPU settled near idle after startup.
+- Rollback: Reapply the `900x205` sizing and cache invalidation changes if the wider, shallower expanded shell is wanted again.
+
+### 2026-06-17 - complete-file-shelf-phase-2-filter-and-multidrag
+- Reason: User wanted Phase 2 finished before moving on: add the `All / Images / Documents / Sheets / Slides / Other` second-level filter in the File Shelf and fix multi-selected drag-out so external apps receive every selected file, not only one.
+- Changed:
+  - `docs/superpowers/plans/2026-06-17-file-shelf-phase-2.md`
+  - `Sources/IslandCore/TemporaryFileShelf.swift`
+  - `Sources/Island/Views/TemporaryFileShelfView.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: File Shelf now has a compact filter bar below the header. Filtering changes only visible items; selected files persist across filter switches unless explicitly cleared. Dragging from a selected tile content area now starts an AppKit multi-item drag with one file URL drag item per selected file, improving compatibility with Finder, Desktop, and other file-accepting apps. Remove-on-success after external drop is still Phase 3.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`.
+- Rollback: Remove `TemporaryFileShelfFilter`, restore `TemporaryFileShelfView` to unfiltered grouped rendering, and replace the AppKit drag-source bridge with the prior single-item drag path if the filter/multidrag behavior should be disabled.
+
 ### 2026-06-17 - fix-file-shelf-selected-drag-provider
 - Reason: User reported that after rectangle-selecting multiple File Shelf items, dragging the selection still exported only one file. Root cause was that each tile's SwiftUI `.onDrag` always returned a provider for only the pressed item and did not consult `selectedItemIDs`.
 - Changed:

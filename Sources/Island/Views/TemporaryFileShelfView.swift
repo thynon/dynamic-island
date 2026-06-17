@@ -361,9 +361,6 @@ struct TemporaryFileShelfView: View {
         .onTapGesture {
             onSelectItem(item.id)
         }
-        .onDrag { dragItemProviders(for: item).first ?? NSItemProvider() } preview: {
-            dragPreview(for: item)
-        }
     }
 
     private func draggedItems(for item: TemporaryShelfItem) -> [TemporaryShelfItem] {
@@ -381,30 +378,6 @@ struct TemporaryFileShelfView: View {
         }
     }
 
-    private func dragPreview(for item: TemporaryShelfItem) -> some View {
-        let count = draggedItems(for: item).count
-
-        return HStack(spacing: 6) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: item.fileURL.path))
-                .resizable()
-                .frame(width: 20, height: 20)
-
-            Text(count == 1 ? item.displayName : "\(count) files")
-                .font(.system(size: 10, weight: .heavy, design: .rounded))
-                .foregroundStyle(.white.opacity(0.86))
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 9)
-        .frame(height: 32)
-        .background {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.black.opacity(0.86))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.18), lineWidth: 1)
-                }
-        }
-    }
 }
 
 private extension View {

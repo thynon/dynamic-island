@@ -360,6 +360,7 @@ private func testTemporaryFileShelfViewExposesSecondLevelFilterBar() {
     )
 }
 
+
 private func testFileShelfOverlayCanDismissAndCollapseAfterButtonOpen() {
     let projectRoot = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
@@ -593,12 +594,12 @@ private func testTemporaryFileShelfViewDragsSelectedItemsTogether() {
         "file shelf view computes item providers represented by a drag"
     )
     expectEqual(
-        shelfView.contains(".onDrag { dragItemProviders(for: item).first ?? NSItemProvider() } preview:"),
+        shelfView.contains("ShelfFileDragSourceNSView"),
         true,
-        "tile drag keeps a SwiftUI drag preview while delegating multi-file export to AppKit"
+        "tile drag uses an AppKit drag source for cross-app multi-file export"
     )
     expectEqual(
-        shelfView.contains(".onDragItems { dragItemProviders(for: item) }"),
+        shelfView.contains(".onDragItems { dragItemProviders(for: item) } fileURLs:"),
         true,
         "tile drag exports each selected file as its own provider for cross-app drops"
     )
@@ -611,6 +612,11 @@ private func testTemporaryFileShelfViewDragsSelectedItemsTogether() {
         shelfView.contains("NSItemProvider.writingFileURLs"),
         false,
         "file shelf no longer packs multiple files into one provider"
+    )
+    expectEqual(
+        shelfView.contains(".onDrag {"),
+        false,
+        "file shelf avoids the SwiftUI single-provider drag path for selected multi-file drags"
     )
 }
 
