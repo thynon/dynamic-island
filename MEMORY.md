@@ -27,6 +27,337 @@ Each event should use this shape:
 
 ## Events
 
+### 2026-06-18 - rollback-horizontal-swipe-music-skip
+- Reason: User requested rolling back to the state before the left/right swipe recommendation and feature.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandTrackingHostingView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Sources/DynamicIsland/Support/MusicPlaybackDataSource.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Views/ClosedMusicWaveformView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Removed horizontal scroll forwarding, gesture-axis locking, swipe-to-skip commands, skip feedback state, left/right skip icons, and the temporary dark/pink skip feedback styling. Vertical notch scroll hide/show remains active, including hidden-state priority and immediate hover restoration after downward reveal. Music metadata reveal, compact artwork, waveform, width, and radius tuning are unchanged.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; `./script/build_and_run.sh`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at about `0.3%` CPU after settling.
+- Rollback: Reapply the horizontal-swipe events if left/right track skipping should return later.
+
+### 2026-06-17 - align-skip-feedback-and-hide-motion-reference
+- Reason: User provided a reference showing the skip feedback style and clarified that next-track feedback should show the next icon beside the waveform, previous-track feedback should show the previous icon to the left of the album artwork, and hide/show should close inward from both sides and reopen outward.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Views/ClosedMusicWaveformView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Skip feedback now uses a temporary dark shell style with pink waveform bars and icon placement tied to the existing album/waveform centers: previous icon left of artwork, next icon right of waveform. Hidden shell animation now scales horizontally toward the center instead of traveling upward, so restore expands outward from the center. A fallback cleanup path clears stuck skip feedback after horizontal gestures.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; `./script/build_and_run.sh`; screenshot confirmed the default music state returned to white shell/black waveform after restart; process check showed DynamicIsland at `0.0%` CPU after settling.
+- Rollback: Restore fixed black waveform styling, remove `barColor`, remove `shellFillColor` and `hiddenShellHorizontalScale`, and return to the previous icon-center calculation if the darker reference style or inward/outward hide motion is not preferred.
+
+### 2026-06-17 - refine-horizontal-swipe-with-gesture-lock
+- Reason: User asked to stop the half-finished horizontal swipe work and reorganize it by stages: unified scroll entry, pointer hot-zone check, hidden-state priority, independent hover, accumulated gesture locking, start/commit thresholds, progress-driven icon feedback, and delayed gesture reset.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandTrackingHostingView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Support/MusicPlaybackDataSource.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: All scroll events enter `handleScroll(deltaX:deltaY:)`. The controller first requires `panel.frame.contains(NSEvent.mouseLocation)`, gives hidden state priority, accumulates deltas, locks each scroll sequence to `.horizontal` or `.vertical`, starts icon feedback at `8pt`, commits one skip at `48pt`, resets after `0.22s` of no scroll events, and keeps the existing vertical hide/show threshold at `0.8pt`. Overlay feedback now follows `musicSkipGestureProgress`. The previous-track command now rewinds `player position` to `0` before `previous track` so Music goes to the prior song instead of restarting the current one.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; `./script/build_and_run.sh`; Computer Use right-scroll on Dynamic Island advanced Music from `勋章 Medals` to `最熟悉的陌生人`; direct robust previous command returned Music from `最熟悉的陌生人` to `勋章 Medals`; Computer Use left-scroll did not reliably deliver a previous scroll event in this run; process check showed DynamicIsland at `0.0%` CPU after settling.
+- Rollback: Restore the simpler non-accumulated `handleHorizontalMusicSkip(deltaX:deltaY:)` path and remove `ActiveScrollGesture`, accumulated deltas, progress state, and delayed reset if the staged gesture lock feels too heavy.
+
+### 2026-06-17 - add-horizontal-swipe-music-skip
+- Reason: User requested that when the cursor is over the notch/island, horizontal trackpad swipes switch music tracks: right swipe for next, left swipe for previous, with a directional side icon popping out.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandTrackingHostingView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Sources/DynamicIsland/Support/MusicPlaybackDataSource.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Scroll events now pass both `deltaX` and `deltaY`. Closed music state recognizes deliberate horizontal gestures only while music is playing, not hidden, and not expanded. Natural trackpad right-swipe (`deltaX < -6`) sends `next track`; left-swipe (`deltaX > 6`) sends `previous track`. A short-lived `skip.forward.fill` or `skip.backward.fill` icon appears on the corresponding side, and metadata cache is invalidated after successful commands.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; `./script/build_and_run.sh`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.9%` CPU after settling.
+- Rollback: Remove `MusicSkipDirection`, `skipTrack`, `musicSkipFeedbackDirection`, and the horizontal branch in `handleScroll(deltaX:deltaY:)` to return to vertical scroll-only behavior.
+
+### 2026-06-17 - remove-compact-artwork-extra-box
+- Reason: User noticed a small square around the compact music artwork in both default and hover states.
+- Changed:
+  - `Sources/DynamicIsland/Views/ClosedMusicAvatarView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Removed the avatar's extra outline stroke and shadow so the compact artwork renders only the clipped album image or fallback glyph, avoiding a visible UI box on the white shell.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; `./script/build_and_run.sh`; default and hover screenshots captured; process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.1%` CPU after settling.
+- Rollback: Restore the `RoundedRectangle.stroke` overlay and `.shadow` in `ClosedMusicAvatarView` if a visible artwork container is desired again.
+
+### 2026-06-17 - keep-music-accessories-through-expanded-state
+- Reason: User provided compact and expanded music-state references and requested centered song metadata, unchanged artwork/waveform size in expanded state, and smooth travel between compact and expanded positions.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: The compact music artwork and waveform now stay mounted while music is playing, move to dedicated expanded left-header positions (`48pt` and `90pt`) during expansion, and keep the same `18pt` size. Track-change title and artist text are centered.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; `./script/build_and_run.sh`; screenshots captured default and expanded music states; process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.8%` CPU after settling.
+- Rollback: Remove `expandedMusicArtworkCenterX`, `expandedMusicWaveformCenterX`, and the expanded music accessory position switching to return accessories to compact-only rendering.
+
+### 2026-06-17 - add-track-change-info-reveal
+- Reason: User requested that when the song changes, the compact music state expands downward, shows song title and artist, enlarges the artwork, then returns to the default state after `2.5s` with smooth linear animation.
+- Changed:
+  - `Sources/DynamicIsland/Support/MusicPlaybackDataSource.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Music snapshots now carry `title`, `artist`, and `trackIdentity`, with Music/Spotify AppleScript reading current track metadata. The controller detects track identity changes, expands the closed music canvas to `72pt` high, presents title/artist and enlarged artwork with `.linear(duration: 0.22)`, then dismisses after `2.5s` and restores the default compact music layout.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.0%` CPU after startup settled.
+- Rollback: Remove `isTrackInfoPresented`, track identity detection, and Music/Spotify title/artist parsing to return to artwork/waveform-only compact music state.
+
+### 2026-06-17 - restore-hover-after-scroll-show
+- Reason: User pointed out that after downward scroll restore, the pointer is still in the notch area, so the shell should immediately be in hover state instead of waiting for another mouse-enter event.
+- Changed:
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: When hidden shell is restored, the panel re-enables mouse events, removes the hidden scroll monitor, and immediately sets `overlayState.isHovered = panel.frame.contains(NSEvent.mouseLocation)`.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.0%` CPU after startup settled.
+- Rollback: Remove the explicit hover sync if restore should always return to a non-hover visual state.
+
+### 2026-06-17 - shorten-trackpad-hide-gesture
+- Reason: User felt the trackpad upward gesture needed too much travel and the hide/show motion path felt too long for normal use.
+- Changed:
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Scroll handling now uses a centralized `handleScroll(deltaY:)` with a low `0.8pt` activation threshold. Natural upward scrolling hides at `deltaY < -0.8`; natural downward scrolling restores at `deltaY > 0.8`. The visual hide offset was shortened from a full shell-height travel to `-12pt`, relying on opacity for invisibility and making the transition feel shorter.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.0%` CPU after startup settled.
+- Rollback: Restore the direct `setShellHidden(deltaY < 0)` handling and full-height hidden offset if a longer deliberate swipe is preferred.
+
+### 2026-06-17 - make-hidden-shell-scroll-only
+- Reason: User pointed out hidden state still was not truly non-interactive; it should remain invisible, non-hoverable, and non-clickable, with only a transparent scroll zone waiting for the downward restore gesture.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Hidden shell now disables SwiftUI hit testing and sets `panel.ignoresMouseEvents = true` after the hide transition, so hover and click events pass through. A hidden-only global scroll monitor checks whether the mouse is inside the panel frame and restores the shell only on the natural downward scroll gesture.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at about `1.0%` CPU after startup settled.
+- Rollback: Remove the hidden scroll monitor and `panel.ignoresMouseEvents` toggling if the always-interactive transparent panel is preferred.
+
+### 2026-06-17 - invert-trackpad-scroll-hide-direction
+- Reason: User confirmed Apple trackpad natural scrolling made the previous direction feel reversed: the app's upward scroll matched the user's downward gesture. Hidden state should remain invisible/non-interactive until the user swipes down again.
+- Changed:
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Natural trackpad `scrollingDeltaY < 0` now hides the shell, and `scrollingDeltaY > 0` shows it. Hidden shells still ignore hover reveal and expansion taps while keeping the transparent tracking zone alive for the down-swipe restore gesture.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.0%` CPU after startup.
+- Rollback: Change `setShellHidden(deltaY < 0)` back to `setShellHidden(deltaY > 0)` if using a non-natural scroll direction setup.
+
+### 2026-06-17 - add-notch-scroll-hide-show
+- Reason: User requested an interaction where moving the cursor to the notch/island area and swiping up hides the island, while swiping down shows it again, with a non-abrupt transition.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandTrackingHostingView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: The panel remains present as a transparent top tracking zone, while the shell visually hides/shows via opacity, upward offset, and slight scale animation. `scrollingDeltaY > 0` hides the shell; downward scroll shows it again. Hiding also collapses expanded state and clears hover preview.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.0%` CPU after startup.
+- Rollback: Remove `isShellHidden`, `onScroll`, and `setShellHidden` to return to always-visible behavior.
+
+### 2026-06-17 - rounded-static-artwork-and-core-animation-bars
+- Reason: User provided a reference screenshot and requested the compact music artwork use a static rounded-corner album style, while still wanting the waveform bars animated with lower CPU cost.
+- Changed:
+  - `Sources/DynamicIsland/Views/ClosedMusicAvatarView.swift`
+  - `Sources/DynamicIsland/Views/ClosedMusicWaveformView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Compact artwork is now a static rounded rectangle instead of a rotating circular disc. Compact waveform bars now animate through Core Animation `CALayer`/`CABasicAnimation` instead of SwiftUI `TimelineView` or Canvas redraws.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.0%` CPU after startup; visual crop captured at `/tmp/dynamic-island-rounded-art-waveform-top.png`.
+- Rollback: Restore circular artwork and the previous SwiftUI waveform view if the earlier disc visual is preferred.
+
+### 2026-06-17 - widen-music-compact-shell-to-350
+- Reason: User reviewed the `300pt` music compact state and requested `350pt` because `300pt` still felt small.
+- Changed:
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Music compact shell now derives to `350x32` from a `185pt` camera housing plus `82.5pt` side slots. Default compact width remains `260pt`, and compact music accessory size resolves to the `18pt` cap under the current `5pt` boundary.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.0%` CPU after startup; visual crop captured at `/tmp/dynamic-island-music-350-top.png`.
+- Rollback: Restore `musicStatusSlotWidth` to `57.5` and the music width/accessory-size expectations if the prior `300pt` music compact state should return.
+
+### 2026-06-17 - set-shell-content-boundary-to-5pt
+- Reason: User requested both default and expanded shell UI/text/function/layout boundaries use a `5pt` constraint, with rounded-corner handling and cleanup of unnecessary code.
+- Changed:
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Sources/DynamicIslandCore/IslandTopStatusBandLayout.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Views/IslandShape.swift`
+  - `Sources/DynamicIsland/Views/ClosedMusicAvatarView.swift`
+  - `Sources/DynamicIsland/Views/ClosedMusicWaveformView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Added a shared `defaultContentBoundaryInset = 5` and routed closed status guard, closed music accessory guard, expanded content guard, and expanded bottom guards through it. Expanded top regions still add `openTopCornerRadius + 5` where they sit near rounded top corners. At the current `260pt` closed/music width, compact music accessory usable size resolves to `0pt`; the overlay now skips rendering zero-size animated accessories to avoid invisible animation work.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; process check showed DynamicIsland running from `dist/Dynamic Island.app`, with CPU settling to about `0.4%` after startup.
+- Rollback: Restore the previous `2pt` closed guard and `6pt` expanded guard constants if the tighter edge constraint should be reverted.
+
+### 2026-06-17 - widen-default-compact-shell-to-260
+- Reason: User requested the default closed shell width increase by another `10pt`.
+- Changed:
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Default closed shell now derives to `260x32` from a `185pt` camera housing plus `37.5pt` side slots. The shell remains one continuous shape; `outerRadius = 30`, `innerRadius = 7`, and `concaveTopRadius = 18` are unchanged.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; process check showed DynamicIsland running from `dist/Dynamic Island.app`, with CPU returning to about `0.1%` after startup.
+- Rollback: Restore `statusSlotWidth` to `32.5` and the corresponding core-check expectations if the prior `250pt` default compact shell should return.
+
+### 2026-06-17 - revert-explicit-camera-cutout
+- Reason: User clarified that the explicit left/right camera cutout approach changed the default shell into a different visual model from the requested notch-fitting radius tuning.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandShape.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Removed the explicit `cameraCutoutWidth` path and returned the default shell to one continuous shape. Kept the existing default width and radius tuning path: closed shell width `250pt`, `outerRadius = 30`, `innerRadius = 7`, and `concaveTopRadius = 18`.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at about `0.1%` CPU.
+- Rollback: Restore the `cameraCutoutWidth` and `addClosedSideSlot` implementation only if the user explicitly asks for a separated left/right slot model.
+
+### 2026-06-17 - add-explicit-camera-cutout-to-closed-shell
+- Reason: User provided a photo showing the widened default shell still did not align with the physical notch at the upper notch-adjacent corners, and asked for a more accurate approach.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandShape.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Closed shell now passes `cameraHousingWidth` into `IslandShape` and draws explicit left/right side slots with a camera cutout instead of relying only on the physical non-display notch to hide the center. Expanded shells still pass `0` cutout width and remain continuous. Existing default width, vertical position, `outerRadius = 30`, `innerRadius = 7`, and `concaveTopRadius = 18` remain unchanged.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; system window list showed Dynamic Island onscreen at `282x42`, process check showed DynamicIsland running from `dist/Dynamic Island.app` at about `1.6%` CPU, and a top crop was captured at `/tmp/dynamic-island-cutout.png`.
+- Rollback: Remove `cameraCutoutWidth` from `IslandShape` and `IslandOverlayView`, and return to the previous continuous closed shell path if the explicit cutout is worse on the physical screen.
+
+### 2026-06-17 - widen-default-compact-shell-to-250
+- Reason: User requested the default closed shell width increase by another `10pt`.
+- Changed:
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Default closed shell now derives to `250x32` from a `185pt` camera housing plus `32.5pt` side slots. Music closed shell remains `260pt`; `outerRadius = 30`, `innerRadius = 7`, and `concaveTopRadius = 18` are unchanged.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; system window list showed Dynamic Island onscreen at `282x42`, and process check showed DynamicIsland running from `dist/Dynamic Island.app` at about `0.2%` CPU.
+- Rollback: Restore `statusSlotWidth` to `27.5` and the corresponding core-check expectations if the prior `240pt` default compact shell should return.
+
+### 2026-06-17 - widen-default-compact-shell-to-240
+- Reason: User requested the default closed shell width increase by `10pt`.
+- Changed:
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Default closed shell now derives to `240x32` from a `185pt` camera housing plus `27.5pt` side slots. Music closed shell remains `260pt`; `outerRadius = 30`, `innerRadius = 7`, and `concaveTopRadius = 18` are unchanged.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; system window list showed Dynamic Island onscreen at `282x42`, and process check showed DynamicIsland running from `dist/Dynamic Island.app` at about `0.0%` CPU.
+- Rollback: Restore `statusSlotWidth` to `22.5` and the corresponding core-check expectations if the prior `230pt` default compact shell should return.
+
+### 2026-06-17 - tune-compact-concave-top-radius-from-photo
+- Reason: User provided a new photo showing the default shell still did not fully overlap the physical notch near the notch-adjacent upper inner corners.
+- Changed:
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Reduced `closedConcaveTopRadius` from `22pt` to `18pt` so the upper inner corner is shorter and less rounded, while keeping `outerRadius = 30`, `innerRadius = 7`, width, vertical position, and music logic unchanged.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; system window list showed Dynamic Island onscreen at `282x42`, and process check showed DynamicIsland running from `dist/Dynamic Island.app` at about `0.4%` CPU.
+- Rollback: Restore `defaultClosedConcaveTopRadius` and its test expectation to `22` if the previous upper inner corner depth is preferred.
+
+### 2026-06-17 - tune-compact-shell-concave-top-radius-22
+- Reason: User requested the newly added default `concaveTopRadius` change from `20pt` to `22pt`.
+- Changed:
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Default closed shell keeps the current width, vertical position, `outerRadius = 30`, and `innerRadius = 7`; only `closedConcaveTopRadius` changed to `22pt`.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; system window list showed Dynamic Island onscreen at `282x42`, and process check showed DynamicIsland running from `dist/Dynamic Island.app` at about `0.7%` CPU.
+- Rollback: Restore `defaultClosedConcaveTopRadius` and its test expectation to `20` if the prior concave top radius should return.
+
+### 2026-06-17 - add-compact-shell-concave-top-radius
+- Reason: User pointed to the notch-adjacent upper inner slot corners and requested a separate `concaveTopRadius`, suggesting an initial `18pt` to `22pt` trial range.
+- Changed:
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Sources/DynamicIsland/Views/IslandShape.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Added `closedConcaveTopRadius` with an initial `20pt` value. Closed outer radius remains `30pt`, inner radius remains `7pt`, and the new concave top radius controls the vertical depth of the notch-adjacent upper inner curve without changing width or vertical position.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; system window list showed Dynamic Island onscreen at `282x42`, and process check showed DynamicIsland running from `dist/Dynamic Island.app` at about `2.0%` CPU.
+- Rollback: Remove `closedConcaveTopRadius`, remove the `IslandShape` parameter, and route the shape back through the previous shared top-radius path if the independent concave corner should be disabled.
+
+### 2026-06-17 - set-compact-shell-outer-radius-30
+- Reason: User clarified the green-marked default shell corner should use `outerRadius = 30`, while the red-marked inner corner stays `innerRadius = 7`.
+- Changed:
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Default closed shell keeps the current `230x32` size and existing vertical position. Closed outer radius is now `30pt`; closed inner radius remains `7pt`.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; system window list showed Dynamic Island onscreen at `282x42`, and process check showed DynamicIsland running from `dist/Dynamic Island.app` at about `1.7%` CPU.
+- Rollback: Restore closed outer radius to `24` and compact music accessory size expectation to `9.5` if the prior corner tuning should return.
+
+### 2026-06-17 - set-compact-shell-radii-24-7
+- Reason: User requested the closed shell outer radius become `24pt` and inner radius become `7pt`.
+- Changed:
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Closed shell keeps the current `230x32` default size and existing vertical position. Closed outer radius is now `24pt`, inner radius is `7pt`, and compact music accessory safe size updates to about `9.5pt`.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; system window list showed Dynamic Island onscreen at `282x42`, and process check showed DynamicIsland running from `dist/Dynamic Island.app` at about `0.2%` CPU.
+- Rollback: Restore closed outer radius to `22`, inner radius to `6`, and compact music accessory size expectation to `11.5` if the prior corner tuning should return.
+
+### 2026-06-17 - set-compact-shell-radii-22-6
+- Reason: User requested the closed shell outer radius become `22pt`, inner radius become `6pt`, and vertical alignment either stay unchanged or move up only `1pt`; chose unchanged to avoid a larger visual move.
+- Changed:
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Closed shell keeps the current `230x32` default size and existing vertical position. Closed outer radius is now `22pt`, inner radius is `6pt`, and compact music accessory safe size updates to about `11.5pt`.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; system window list showed Dynamic Island onscreen at `282x42`, and process check showed DynamicIsland running from `dist/Dynamic Island.app` at about `3.3%` CPU shortly after launch.
+- Rollback: Restore closed outer radius to `22.86`, inner radius to `5.71`, and compact music accessory size expectation to `10.64` if the prior corner tuning should return.
+
+### 2026-06-17 - refine-compact-shell-corner-radii
+- Reason: User requested the closed shell outer corner radius change to `22.86pt` and inner corner radius change to `5.71pt`.
+- Changed:
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Closed shell keeps the current `230x32` default size, with outer radius `22.86pt` and inner radius `5.71pt`. The compact music accessory safe size updates to about `10.64pt` from the revised outer-radius guard.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at about `1.1%` CPU.
+- Rollback: Restore closed outer radius to `22.9`, inner radius to `5.7`, and compact music accessory size expectation to `10.6` if the prior corner tuning should return.
+
+### 2026-06-17 - widen-default-compact-shell-to-230
+- Reason: User requested the default closed shell width change to `230pt`.
+- Changed:
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Default closed shell now derives to `230x32` from a `185pt` camera housing plus `22.5pt` side slots. Music closed shell remains `260pt`, and the existing `22.9pt` outer / `5.7pt` inner closed radii are unchanged.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at about `1.7%` CPU.
+- Rollback: Restore `statusSlotWidth` to `17.5` and the corresponding core-check expectations if the prior `220pt` default compact shell should return.
+
+### 2026-06-17 - widen-default-compact-shell-to-220
+- Reason: User requested the default closed shell width change to `220pt`.
+- Changed:
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Default closed shell now derives to `220x32` from a `185pt` camera housing plus `17.5pt` side slots. Music closed shell remains `260pt`, and the existing `22.9pt` outer / `5.7pt` inner closed radii are unchanged.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at about `0.1%` CPU.
+- Rollback: Restore `statusSlotWidth` to `7.5` and the corresponding core-check expectations if the prior `200pt` default compact shell should return.
+
+### 2026-06-17 - tune-default-compact-shell-radius
+- Reason: User requested the default closed shell width become `200pt`, with outer corner radius `22.9pt` and inner corner radius `5.7pt`.
+- Changed:
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Sources/DynamicIsland/Views/IslandShape.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Default closed shell now derives to `200x32` from a `185pt` camera housing plus `7.5pt` side slots. Closed top/outer radius is `22.9pt`, closed bottom/inner radius is `5.7pt`, and the shape renderer preserves that paired radius instead of clamping each radius to half the shell height.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at about `0.9%` CPU.
+- Rollback: Restore `statusSlotWidth` to `5`, closed top/bottom radii to `16`, and the previous `IslandShape` half-height radius clamp if the prior `195x32` compact shell should return.
+
 ### 2026-06-17 - rename-project-to-dynamic-island
 - Reason: User requested the project name change to Dynamic Island and a cleaner local branch structure centered on `main`.
 - Changed:

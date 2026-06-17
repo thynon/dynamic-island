@@ -4,13 +4,27 @@ import DynamicIslandCore
 
 struct MusicPlaybackSnapshot: Equatable, Sendable {
     let isPlaying: Bool
+    let title: String
+    let artist: String
     let waveform: AudioPlaybackSnapshot
     let artworkData: Data?
 
-    static let idle = MusicPlaybackSnapshot(isPlaying: false, waveform: .idle, artworkData: nil)
+    static let idle = MusicPlaybackSnapshot(isPlaying: false, title: "", artist: "", waveform: .idle, artworkData: nil)
 
-    static func playing(artworkData: Data? = nil) -> MusicPlaybackSnapshot {
-        MusicPlaybackSnapshot(isPlaying: true, waveform: syntheticWaveform(), artworkData: artworkData)
+    var trackIdentity: String? {
+        guard isPlaying else { return nil }
+        let identity = "\(title)\u{1f}\(artist)"
+        return identity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : identity
+    }
+
+    static func playing(title: String = "", artist: String = "", artworkData: Data? = nil) -> MusicPlaybackSnapshot {
+        MusicPlaybackSnapshot(
+            isPlaying: true,
+            title: title,
+            artist: artist,
+            waveform: syntheticWaveform(),
+            artworkData: artworkData
+        )
     }
 
     private static func syntheticWaveform() -> AudioPlaybackSnapshot {
@@ -30,6 +44,8 @@ protocol MusicPlaybackDataSource: Sendable {
 }
 
 final class ScriptableMusicPlaybackDataSource: MusicPlaybackDataSource, @unchecked Sendable {
+    private static let cacheDuration: TimeInterval = 1.5
+
     private let players = [
         ScriptableMusicPlayer(appName: "Music", bundleIdentifier: "com.apple.Music"),
         ScriptableMusicPlayer(appName: "Spotify", bundleIdentifier: "com.spotify.client")
@@ -43,7 +59,7 @@ final class ScriptableMusicPlaybackDataSource: MusicPlaybackDataSource, @uncheck
             (snapshot: cachedSnapshot, date: cachedDate)
         }
 
-        if let date = cached.date, Date().timeIntervalSince(date) <= 1.0 {
+        if let date = cached.date, Date().timeIntervalSince(date) <= Self.cacheDuration {
             return cached.snapshot
         }
 
@@ -98,6 +114,8 @@ final class ScriptableMusicPlaybackDataSource: MusicPlaybackDataSource, @uncheck
             tell application "\(escapedAppName)"
                 try
                     if player state is playing then
+                        set trackTitle to name of current track
+                        set trackArtist to artist of current track
                         try
                             set artworkData to data of artwork 1 of current track
                         end try
@@ -121,20 +139,26 @@ final class ScriptableMusicPlaybackDataSource: MusicPlaybackDataSource, @uncheck
                     end try
                 end try
             end if
-            return "playing"
+            return "playing\t" & trackTitle & "\t" & trackArtist
         end if
-        return "idle"
+        return "idle\t\t"
         """
 
         defer {
             try? FileManager.default.removeItem(at: artworkURL)
         }
 
-        guard runAppleScript(script) == "playing" else {
+        let output = runAppleScript(script)
+        let parts = output.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+        guard parts.first == "playing" else {
             return nil
         }
 
-        return .playing(artworkData: try? Data(contentsOf: artworkURL))
+        return .playing(
+            title: parts.dropFirst().first ?? "",
+            artist: parts.dropFirst(2).first ?? "",
+            artworkData: try? Data(contentsOf: artworkURL)
+        )
     }
 
     private static func spotifyPlayingSnapshot(appName: String) -> MusicPlaybackSnapshot? {
@@ -145,9 +169,9 @@ final class ScriptableMusicPlaybackDataSource: MusicPlaybackDataSource, @uncheck
                 try
                     if player state is playing then
                         try
-                            return "playing\t" & (artwork url of current track)
+                            return "playing\t" & (name of current track) & "\t" & (artist of current track) & "\t" & (artwork url of current track)
                         on error
-                            return "playing\t"
+                            return "playing\t" & (name of current track) & "\t" & (artist of current track) & "\t"
                         end try
                     end if
                 end try
@@ -162,10 +186,14 @@ final class ScriptableMusicPlaybackDataSource: MusicPlaybackDataSource, @uncheck
             return nil
         }
 
-        let artworkData = parts.dropFirst().first
+        let artworkData = parts.dropFirst(3).first
             .map(String.init)
             .flatMap(remoteArtworkData)
-        return .playing(artworkData: artworkData)
+        return .playing(
+            title: parts.dropFirst().first.map(String.init) ?? "",
+            artist: parts.dropFirst(2).first.map(String.init) ?? "",
+            artworkData: artworkData
+        )
     }
 
     private static func isPlaying(appName: String) -> Bool {

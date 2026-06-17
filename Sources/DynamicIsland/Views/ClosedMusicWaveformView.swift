@@ -1,42 +1,93 @@
+import AppKit
 import SwiftUI
 import DynamicIslandCore
 
-struct ClosedMusicWaveformView: View {
+struct ClosedMusicWaveformView: NSViewRepresentable {
     let snapshot: AudioPlaybackSnapshot
 
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-            Canvas { context, size in
-                let bars = 5
-                let spacing = max(0.8, size.width * 0.07)
-                let width = max(1.2, (size.width - spacing * CGFloat(bars - 1)) / CGFloat(bars))
-                let centerY = size.height / 2
-
-                for index in 0..<bars {
-                    let height = barHeight(index: index, date: timeline.date, maxHeight: size.height)
-                    let x = CGFloat(index) * (width + spacing)
-                    let rect = CGRect(
-                        x: x,
-                        y: centerY - (height / 2),
-                        width: width,
-                        height: height
-                    )
-                    let path = Path(roundedRect: rect, cornerRadius: width / 2)
-                    context.fill(path, with: .color(.black))
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .accessibilityHidden(true)
+    func makeNSView(context: Context) -> WaveformBarsView {
+        WaveformBarsView()
     }
 
-    private func barHeight(index: Int, date: Date, maxHeight: CGFloat) -> CGFloat {
-        let phase = date.timeIntervalSinceReferenceDate * 5.2 + Double(index) * 0.82
-        let fallback = 0.48 + (sin(phase) * 0.30)
-        let levels = snapshot.levels
-        let sample = levels.isEmpty
-            ? fallback
-            : (abs(levels[(index * 2) % levels.count]) * 0.72) + (fallback * 0.28)
-        return max(3, min(maxHeight, 3 + CGFloat(sample) * max(1, maxHeight - 3)))
+    func updateNSView(_ nsView: WaveformBarsView, context: Context) {
+        nsView.update(levels: snapshot.levels)
+    }
+}
+
+final class WaveformBarsView: NSView {
+    private let barCount = 5
+    private let bars: [CALayer]
+
+    override init(frame frameRect: NSRect) {
+        bars = (0..<barCount).map { _ in
+            let layer = CALayer()
+            layer.backgroundColor = NSColor.black.cgColor
+            layer.cornerRadius = 1.1
+            return layer
+        }
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.masksToBounds = false
+        bars.forEach { layer?.addSublayer($0) }
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func layout() {
+        super.layout()
+        layoutBars()
+    }
+
+    func update(levels: [Double]) {
+        for index in bars.indices {
+            let scale = scale(for: index, levels: levels)
+            animate(bar: bars[index], index: index, scale: scale)
+        }
+        layoutBars()
+    }
+
+    private func layoutBars() {
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let spacing: CGFloat = max(0.8, bounds.width * 0.07)
+        let barWidth: CGFloat = max(1.2, (bounds.width - spacing * CGFloat(barCount - 1)) / CGFloat(barCount))
+        let barHeight: CGFloat = min(14, bounds.height)
+        let startX = (bounds.width - ((barWidth * CGFloat(barCount)) + spacing * CGFloat(barCount - 1))) / 2
+        let centerY = bounds.midY
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (index, bar) in bars.enumerated() {
+            bar.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+            bar.frame = CGRect(
+                x: startX + CGFloat(index) * (barWidth + spacing),
+                y: centerY - (barHeight / 2),
+                width: barWidth,
+                height: barHeight
+            )
+            bar.cornerRadius = barWidth / 2
+        }
+        CATransaction.commit()
+    }
+
+    private func animate(bar: CALayer, index: Int, scale: CGFloat) {
+        guard bar.animation(forKey: "waveform-scale") == nil else { return }
+        let animation = CABasicAnimation(keyPath: "transform.scale.y")
+        animation.fromValue = max(0.28, scale * 0.72)
+        animation.toValue = min(1, max(0.42, scale))
+        animation.duration = 0.68 + (Double(index) * 0.05)
+        animation.beginTime = CACurrentMediaTime() + (Double(index) * 0.08)
+        animation.autoreverses = true
+        animation.repeatCount = .infinity
+        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        bar.add(animation, forKey: "waveform-scale")
+    }
+
+    private func scale(for index: Int, levels: [Double]) -> CGFloat {
+        let fallback: [CGFloat] = [0.78, 0.42, 0.88, 0.52, 0.82]
+        guard !levels.isEmpty else { return fallback[index % fallback.count] }
+        return max(0.28, min(1, CGFloat(abs(levels[(index * 2) % levels.count]))))
     }
 }

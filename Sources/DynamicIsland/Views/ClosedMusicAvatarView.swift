@@ -5,26 +5,18 @@ struct ClosedMusicAvatarView: View {
     let artworkData: Data?
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-            let angle = timeline.date.timeIntervalSinceReferenceDate
-                .truncatingRemainder(dividingBy: 7.5) / 7.5 * 360
+        let cornerRadius: CGFloat = 4
 
-            ZStack {
-                if let artworkImage {
-                    Image(nsImage: artworkImage)
-                        .resizable()
-                        .scaledToFill()
-                        .clipShape(Circle())
-                } else {
-                    fallbackDisc
-                }
-
-                Circle()
-                    .stroke(Color.black.opacity(0.22), lineWidth: 0.8)
+        Group {
+            if let artworkImage {
+                Image(nsImage: artworkImage)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                fallbackDisc
             }
-            .rotationEffect(.degrees(angle))
-            .shadow(color: .black.opacity(0.10), radius: 1, x: 0, y: 0)
         }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .accessibilityHidden(true)
     }
 
@@ -33,12 +25,15 @@ struct ClosedMusicAvatarView: View {
     }
 
     private var fallbackDisc: some View {
-        ZStack {
-            Circle()
-                .fill(Color.black)
-            Circle()
-                .fill(Color.white)
-                .frame(width: 4.2, height: 4.2)
+        GeometryReader { proxy in
+            let dot = min(proxy.size.width, proxy.size.height) * 0.35
+            ZStack {
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(Color.black)
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: dot, height: dot)
+            }
         }
     }
 }

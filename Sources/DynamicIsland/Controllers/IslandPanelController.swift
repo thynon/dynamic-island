@@ -6,16 +6,21 @@ import DynamicIslandCore
 final class IslandPanelController {
     private static let closedHoverHorizontalSlack: CGFloat = 22
     private static let closedHoverBottomSlack: CGFloat = 10
+    private static let scrollActivationThreshold: CGFloat = 0.8
+    private static let trackInfoDismissDelay: TimeInterval = 2.5
 
     private var metrics: NotchMetrics
     private var isExpanded = false
     private var collapseWorkItem: DispatchWorkItem?
+    nonisolated(unsafe) private var trackInfoDismissWorkItem: DispatchWorkItem?
+    private var lastPresentedTrackIdentity: String?
     private let panel: NSPanel
     private let overlayState: IslandOverlayState
     private let hostingView: IslandTrackingHostingView
     private let animationProfile = IslandAnimationProfile.default
     private let musicPlaybackDataSource: any MusicPlaybackDataSource
     private var musicPlaybackPollingTask: Task<Void, Never>?
+    nonisolated(unsafe) private var hiddenScrollMonitor: Any?
 
     init(
         screen: NSScreen? = NSScreen.main,
@@ -48,6 +53,10 @@ final class IslandPanelController {
 
     deinit {
         musicPlaybackPollingTask?.cancel()
+        trackInfoDismissWorkItem?.cancel()
+        if let hiddenScrollMonitor {
+            NSEvent.removeMonitor(hiddenScrollMonitor)
+        }
     }
 
     func show() {
@@ -66,7 +75,11 @@ final class IslandPanelController {
         updateRootView()
         setPanelFrame(
             Self.windowFrame(
-                for: Self.windowSize(for: metrics, usesOpenCanvas: overlayState.usesOpenCanvas),
+                for: Self.windowSize(
+                    for: metrics,
+                    usesOpenCanvas: overlayState.usesOpenCanvas,
+                    showsTrackInfo: overlayState.isTrackInfoPresented
+                ),
                 on: screen
             )
         )
@@ -163,11 +176,77 @@ final class IslandPanelController {
 
     private func installTrackingCallbacks() {
         hostingView.onMouseEntered = { [weak self] in
-            self?.overlayState.isHovered = true
+            guard let self, !self.overlayState.isShellHidden else { return }
+            self.overlayState.isHovered = self.panel.frame.contains(NSEvent.mouseLocation)
         }
         hostingView.onMouseExited = { [weak self] in
             self?.overlayState.isHovered = false
             self?.setExpanded(false)
+        }
+        hostingView.onScroll = { [weak self] deltaY in
+            self?.handleScroll(deltaY: deltaY)
+        }
+    }
+
+    private func handleScroll(deltaY: CGFloat) {
+        let pointerInsideIsland = panel.frame.contains(NSEvent.mouseLocation)
+        guard pointerInsideIsland else { return }
+
+        if overlayState.isShellHidden {
+            if deltaY > Self.scrollActivationThreshold {
+                setShellHidden(false)
+            }
+            return
+        }
+
+        if deltaY < -Self.scrollActivationThreshold {
+            setShellHidden(true)
+        } else if deltaY > Self.scrollActivationThreshold {
+            setShellHidden(false)
+        }
+    }
+
+    private func setShellHidden(_ hidden: Bool) {
+        guard overlayState.isShellHidden != hidden else { return }
+        if hidden {
+            overlayState.isHovered = false
+            overlayState.isTrackInfoPresented = false
+            trackInfoDismissWorkItem?.cancel()
+            trackInfoDismissWorkItem = nil
+            setExpanded(false)
+        } else {
+            panel.ignoresMouseEvents = false
+            removeHiddenScrollMonitor()
+            overlayState.isHovered = panel.frame.contains(NSEvent.mouseLocation)
+        }
+        withAnimation(.easeInOut(duration: 0.22)) {
+            overlayState.isShellHidden = hidden
+        }
+        if hidden {
+            installHiddenScrollMonitor()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
+                guard let self, self.overlayState.isShellHidden else { return }
+                self.panel.ignoresMouseEvents = hidden
+            }
+        }
+    }
+
+    private func installHiddenScrollMonitor() {
+        guard hiddenScrollMonitor == nil else { return }
+        hiddenScrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self else { return }
+            Task { @MainActor in
+                guard self.overlayState.isShellHidden else { return }
+                guard self.panel.frame.contains(NSEvent.mouseLocation) else { return }
+                self.handleScroll(deltaY: event.scrollingDeltaY)
+            }
+        }
+    }
+
+    private func removeHiddenScrollMonitor() {
+        if let hiddenScrollMonitor {
+            NSEvent.removeMonitor(hiddenScrollMonitor)
+            self.hiddenScrollMonitor = nil
         }
     }
 
@@ -177,10 +256,64 @@ final class IslandPanelController {
             while !Task.isCancelled {
                 guard let self else { return }
                 let snapshot = await musicPlaybackDataSource.currentSnapshot()
-                overlayState.musicPlayback = snapshot
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                updateMusicPlayback(snapshot)
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
             }
         }
+    }
+
+    private func updateMusicPlayback(_ snapshot: MusicPlaybackSnapshot) {
+        let previousIdentity = overlayState.musicPlayback.trackIdentity
+        overlayState.musicPlayback = snapshot
+
+        guard
+            !isExpanded,
+            !overlayState.isShellHidden,
+            let trackIdentity = snapshot.trackIdentity
+        else {
+            lastPresentedTrackIdentity = snapshot.trackIdentity
+            return
+        }
+
+        let shouldPresent = previousIdentity != nil
+            && previousIdentity != trackIdentity
+            && lastPresentedTrackIdentity != trackIdentity
+        lastPresentedTrackIdentity = trackIdentity
+
+        if shouldPresent {
+            showTrackInfoTemporarily()
+        }
+    }
+
+    private func showTrackInfoTemporarily() {
+        trackInfoDismissWorkItem?.cancel()
+        setPanelFrame(
+            Self.windowFrame(
+                for: Self.windowSize(for: metrics, usesOpenCanvas: false, showsTrackInfo: true),
+                on: panel.screen ?? NSScreen.main
+            )
+        )
+        withAnimation(.linear(duration: 0.22)) {
+            overlayState.isTrackInfoPresented = true
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            withAnimation(.linear(duration: 0.22)) {
+                self.overlayState.isTrackInfoPresented = false
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
+                guard let self, !self.overlayState.isTrackInfoPresented, !self.overlayState.usesOpenCanvas else { return }
+                self.setPanelFrame(
+                    Self.windowFrame(
+                        for: Self.windowSize(for: self.metrics, usesOpenCanvas: false, showsTrackInfo: false),
+                        on: self.panel.screen ?? NSScreen.main
+                    )
+                )
+            }
+        }
+        trackInfoDismissWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.trackInfoDismissDelay, execute: workItem)
     }
 
     private func position(on screen: NSScreen?) {
@@ -192,11 +325,15 @@ final class IslandPanelController {
         panel.setFrame(frame, display: true)
     }
 
-    private static func windowSize(for metrics: NotchMetrics, usesOpenCanvas: Bool) -> CGSize {
+    private static func windowSize(
+        for metrics: NotchMetrics,
+        usesOpenCanvas: Bool,
+        showsTrackInfo: Bool = false
+    ) -> CGSize {
         guard !usesOpenCanvas else { return metrics.openCompletionFeedbackWindowSize }
         return CGSize(
             width: metrics.musicClosedShellWidth + Self.closedHoverHorizontalSlack,
-            height: metrics.closedHeight + Self.closedHoverBottomSlack
+            height: (showsTrackInfo ? metrics.musicTrackInfoShellHeight : metrics.closedHeight) + Self.closedHoverBottomSlack
         )
     }
 

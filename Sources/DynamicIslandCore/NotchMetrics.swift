@@ -78,16 +78,19 @@ public struct StatusDotSoftGlowStyle: Equatable, Sendable {
 public struct NotchMetrics: Equatable, Sendable {
     public static let defaultCameraHousingWidth: CGFloat = 185
     public static let defaultClosedHeight: CGFloat = 32
-    public static let statusSlotWidth: CGFloat = 5
-    public static let musicStatusSlotWidth: CGFloat = 37.5
+    public static let defaultMusicTrackInfoShellHeight: CGFloat = 72
+    public static let statusSlotWidth: CGFloat = 37.5
+    public static let musicStatusSlotWidth: CGFloat = 82.5
     public static let openWidth: CGFloat = 650
     public static let openHeight: CGFloat = 230
     public static let overshootWidth: CGFloat = 732
     public static let overshootHeight: CGFloat = 254
-    public static let topCornerRadius: CGFloat = 16
-    public static let closedBottomCornerRadius: CGFloat = 16
+    public static let closedOuterCornerRadius: CGFloat = 30
+    public static let defaultClosedConcaveTopRadius: CGFloat = 18
+    public static let defaultOpenTopCornerRadius: CGFloat = 16
+    public static let closedInnerCornerRadius: CGFloat = 7
     public static let openBottomCornerRadius: CGFloat = 24
-    public static let defaultClosedStatusDotGuardInset: CGFloat = 2
+    public static let defaultContentBoundaryInset: CGFloat = 5
     public static let defaultClosedStatusDotHaloDiameter: CGFloat = 10
     public static let defaultClosedCompletionBounceDrop: CGFloat = 14
     public static let defaultClosedCompletionBounceSlack: CGFloat = defaultClosedCompletionBounceDrop + 2
@@ -102,10 +105,6 @@ public struct NotchMetrics: Equatable, Sendable {
     public static let defaultExpandedDemoSlotHeight: CGFloat = 122
     public static let defaultExpandedStatusChipHeight: CGFloat = 24
     public static let defaultExpandedStatusChipCornerRadius: CGFloat = 8
-    public static let defaultExpandedContentGuardInset: CGFloat = 6
-    public static let defaultExpandedContentBottomEdgeInset: CGFloat = 2
-    public static let defaultExpandedContentBottomCornerClearance: CGFloat = defaultExpandedContentBottomEdgeInset
-    public static let defaultExpandedContentBottomGuard: CGFloat = defaultExpandedContentBottomEdgeInset
     public static let compactNotchedReferenceWidth: CGFloat = 1512
     public static let compactNotchedReferenceHeight: CGFloat = 982
     private static let openWidthReductionPerSide: CGFloat = 25
@@ -130,6 +129,10 @@ public struct NotchMetrics: Equatable, Sendable {
         cameraHousingWidth + (Self.musicStatusSlotWidth * 2)
     }
 
+    public var musicTrackInfoShellHeight: CGFloat {
+        Self.defaultMusicTrackInfoShellHeight
+    }
+
     public var statusDotCenterXFromShellCenter: CGFloat {
         -(cameraHousingWidth / 2) - (statusSlotWidth / 2)
     }
@@ -151,7 +154,11 @@ public struct NotchMetrics: Equatable, Sendable {
     }
 
     public var closedStatusDotGuardInset: CGFloat {
-        Self.defaultClosedStatusDotGuardInset
+        Self.defaultContentBoundaryInset
+    }
+
+    public var closedConcaveTopRadius: CGFloat {
+        Self.defaultClosedConcaveTopRadius
     }
 
     public var closedStatusDotHaloDiameter: CGFloat {
@@ -179,11 +186,11 @@ public struct NotchMetrics: Equatable, Sendable {
     }
 
     public var closedMusicAccessoryGuardInset: CGFloat {
-        2
+        Self.defaultContentBoundaryInset
     }
 
     public var closedMusicAccessorySize: CGFloat {
-        min(18, max(1, closedMusicAccessorySafeMaxX - closedMusicAccessorySafeMinX))
+        min(18, max(0, closedMusicAccessorySafeMaxX - closedMusicAccessorySafeMinX))
     }
 
     public var closedLeftMusicAccessoryCenterX: CGFloat {
@@ -199,7 +206,10 @@ public struct NotchMetrics: Equatable, Sendable {
     }
 
     private var closedMusicAccessoryVisibleEdgeInset: CGFloat {
-        min(max(closedTopCornerRadius, closedBottomCornerRadius), closedHeight / 2)
+        min(
+            max(closedTopCornerRadius, closedBottomCornerRadius),
+            Self.musicStatusSlotWidth - (closedMusicAccessoryGuardInset * 2)
+        )
     }
 
     private var closedMusicAccessorySafeMinX: CGFloat {
@@ -216,6 +226,18 @@ public struct NotchMetrics: Equatable, Sendable {
 
     public var expandedStatusDotCenterY: CGFloat {
         closedStatusDotCenterY
+    }
+
+    public var expandedMusicArtworkCenterX: CGFloat {
+        48
+    }
+
+    public var expandedMusicWaveformCenterX: CGFloat {
+        90
+    }
+
+    public var expandedMusicAccessoryCenterY: CGFloat {
+        closedMusicAccessoryCenterY
     }
 
     public var expandedAudioWaveformSize: CGSize {
@@ -266,7 +288,7 @@ public struct NotchMetrics: Equatable, Sendable {
     }
 
     public var expandedContentGuardInset: CGFloat {
-        Self.defaultExpandedContentGuardInset
+        Self.defaultContentBoundaryInset
     }
 
     public var expandedHorizontalContentPadding: CGFloat {
@@ -274,15 +296,15 @@ public struct NotchMetrics: Equatable, Sendable {
     }
 
     public var expandedContentBottomEdgeInset: CGFloat {
-        Self.defaultExpandedContentBottomEdgeInset
+        Self.defaultContentBoundaryInset
     }
 
     public var expandedContentBottomCornerClearance: CGFloat {
-        Self.defaultExpandedContentBottomCornerClearance
+        Self.defaultContentBoundaryInset
     }
 
     public var expandedContentBottomGuard: CGFloat {
-        Self.defaultExpandedContentBottomGuard
+        Self.defaultContentBoundaryInset
     }
 
     public var closedWindowSize: CGSize {
@@ -318,9 +340,9 @@ public struct NotchMetrics: Equatable, Sendable {
         openHeight: CGFloat = Self.openHeight,
         overshootWidth: CGFloat = Self.overshootWidth,
         overshootHeight: CGFloat = Self.overshootHeight,
-        closedTopCornerRadius: CGFloat = Self.topCornerRadius,
-        openTopCornerRadius: CGFloat = Self.topCornerRadius,
-        closedBottomCornerRadius: CGFloat = Self.closedBottomCornerRadius,
+        closedTopCornerRadius: CGFloat = Self.closedOuterCornerRadius,
+        openTopCornerRadius: CGFloat = Self.defaultOpenTopCornerRadius,
+        closedBottomCornerRadius: CGFloat = Self.closedInnerCornerRadius,
         openBottomCornerRadius: CGFloat = Self.openBottomCornerRadius
     ) {
         let resolvedCameraHousingWidth = max(1, cameraHousingWidth.rounded())
@@ -337,10 +359,10 @@ public struct NotchMetrics: Equatable, Sendable {
         self.openHeight = resolvedOpenHeight
         self.overshootWidth = max(resolvedOpenWidth, overshootWidth.rounded())
         self.overshootHeight = max(resolvedOpenHeight, overshootHeight.rounded())
-        self.closedTopCornerRadius = max(0, closedTopCornerRadius.rounded())
-        self.openTopCornerRadius = max(0, openTopCornerRadius.rounded())
-        self.closedBottomCornerRadius = max(0, closedBottomCornerRadius.rounded())
-        self.openBottomCornerRadius = max(0, openBottomCornerRadius.rounded())
+        self.closedTopCornerRadius = max(0, closedTopCornerRadius)
+        self.openTopCornerRadius = max(0, openTopCornerRadius)
+        self.closedBottomCornerRadius = max(0, closedBottomCornerRadius)
+        self.openBottomCornerRadius = max(0, openBottomCornerRadius)
     }
 
     public static func fromDisplay(
