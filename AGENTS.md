@@ -71,7 +71,7 @@ Sources/
       CCSwitchUsageDataSource.swift  #   CC Switch SQLite
       TaskActivityDataSource.swift   #   任务状态（JSONL 事件检测）
       AudioPlaybackDataSource.swift  #   音频源（AppleScript / SCK / Core Audio Tap）
-Tests/IslandCoreChecks/main.swift  #   回归检查入口
+Tests/DynamicIslandCoreChecks/main.swift  #   回归检查入口
 script/build_and_run.sh             #   构建 + 签名 + 打包 + 启动
 ```
 
