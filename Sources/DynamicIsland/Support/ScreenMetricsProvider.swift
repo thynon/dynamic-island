@@ -1,5 +1,5 @@
 import AppKit
-import IslandCore
+import DynamicIslandCore
 
 enum ScreenMetricsProvider {
     struct Result {

@@ -3,25 +3,25 @@
 import PackageDescription
 
 let package = Package(
-    name: "Island",
+    name: "DynamicIsland",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .library(name: "IslandCore", targets: ["IslandCore"]),
-        .executable(name: "Island", targets: ["Island"]),
-        .executable(name: "IslandCoreChecks", targets: ["IslandCoreChecks"])
+        .library(name: "DynamicIslandCore", targets: ["DynamicIslandCore"]),
+        .executable(name: "DynamicIsland", targets: ["DynamicIsland"]),
+        .executable(name: "DynamicIslandCoreChecks", targets: ["DynamicIslandCoreChecks"])
     ],
     targets: [
-        .target(name: "IslandCore"),
+        .target(name: "DynamicIslandCore"),
         .executableTarget(
-            name: "Island",
-            dependencies: ["IslandCore"]
+            name: "DynamicIsland",
+            dependencies: ["DynamicIslandCore"]
         ),
         .executableTarget(
-            name: "IslandCoreChecks",
-            dependencies: ["IslandCore"],
-            path: "Tests/IslandCoreChecks"
+            name: "DynamicIslandCoreChecks",
+            dependencies: ["DynamicIslandCore"],
+            path: "Tests/DynamicIslandCoreChecks"
         )
     ]
 )

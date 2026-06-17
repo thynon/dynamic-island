@@ -1,5 +1,5 @@
 import SwiftUI
-import IslandCore
+import DynamicIslandCore
 
 struct ClosedMusicWaveformView: View {
     let snapshot: AudioPlaybackSnapshot

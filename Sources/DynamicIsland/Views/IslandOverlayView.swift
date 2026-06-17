@@ -1,5 +1,5 @@
 import SwiftUI
-import IslandCore
+import DynamicIslandCore
 
 @MainActor
 final class IslandOverlayState: ObservableObject {

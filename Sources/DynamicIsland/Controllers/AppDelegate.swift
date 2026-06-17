@@ -26,13 +26,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func configureStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "cx"
-        item.button?.toolTip = "Island MVP"
+        item.button?.toolTip = "Dynamic Island MVP"
 
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Show Island", action: #selector(showIsland), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Hide Island", action: #selector(hideIsland), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Show Dynamic Island", action: #selector(showIsland), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Hide Dynamic Island", action: #selector(hideIsland), keyEquivalent: ""))
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit Island", action: #selector(quit), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Quit Dynamic Island", action: #selector(quit), keyEquivalent: "q"))
         menu.items.forEach { $0.target = self }
         item.menu = menu
 

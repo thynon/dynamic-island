@@ -27,6 +27,24 @@ Each event should use this shape:
 
 ## Events
 
+### 2026-06-17 - rename-project-to-dynamic-island
+- Reason: User requested the project name change to Dynamic Island and a cleaner local branch structure centered on `main`.
+- Changed:
+  - `Package.swift`
+  - `Sources/DynamicIsland/`
+  - `Sources/DynamicIslandCore/`
+  - `Tests/DynamicIslandCoreChecks/`
+  - `script/build_and_run.sh`
+  - `script/set_task_activity.sh`
+  - `docs/CODEX_GIT_WORKFLOW.md`
+  - `docs/HANDOFF-2026-06-15.md`
+  - `AGENTS.md`
+  - `docs/superpowers/plans/2026-06-17-dynamic-island-rename-and-mainline.md`
+  - `MEMORY.md`
+- Result: The SwiftPM package, executable, module names, app display strings, bundle identifier, support directory, and user-facing status menu now use Dynamic Island / DynamicIsland naming, with legacy support-path fallback retained for cached display profiles. The work is being finished on a cleaned-up `main`-based local branch layout.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; `ps -o pid,stat,pcpu,pmem,etime,command -p $(pgrep -x DynamicIsland | head -n 1)` showed the renamed app running from `dist/Dynamic Island.app` at about `1.8%` CPU.
+- Rollback: Revert the rename commit and restore the previous `Island` / `IslandCore` naming if the new branding should be backed out.
+
 ### 2026-06-17 - set-white-compact-shell-sizing
 - Reason: User clarified the compact island background itself should become white, with closed height `32pt`, default width increased by `10pt`, music width increased by `10pt`, and closed corner radius set to `16pt`.
 - Changed:

@@ -1,6 +1,6 @@
 import AppKit
 import SwiftUI
-import IslandCore
+import DynamicIslandCore
 
 @MainActor
 final class IslandPanelController {
@@ -137,7 +137,7 @@ final class IslandPanelController {
     }
 
     private func configurePanel() {
-        panel.title = "Island"
+        panel.title = "Dynamic Island"
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false

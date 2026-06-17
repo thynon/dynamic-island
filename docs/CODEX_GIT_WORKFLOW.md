@@ -2,7 +2,7 @@
 
 ## 当前项目状态
 
-Island 是一个已有 SwiftPM macOS 项目，不是空仓库。
+Dynamic Island 是一个已有 SwiftPM macOS 项目，不是空仓库。
 
 因此提交时必须特别小心：
 
@@ -39,7 +39,7 @@ git push
 
 ## Codex 操作规则
 
-让 Codex 改 Island 时，建议这样说：
+让 Codex 改 Dynamic Island 时，建议这样说：
 
 ```text
 只修改和这个任务相关的文件，不要提交其他未提交改动。
@@ -57,8 +57,8 @@ git push
 
 按改动类型选择：
 
-- 核心逻辑：`swift run IslandCoreChecks`
-- 主程序编译：`swift build --product Island`
+- 核心逻辑：`swift run DynamicIslandCoreChecks`
+- 主程序编译：`swift build --product DynamicIsland`
 - 运行应用：`./script/build_and_run.sh`
 
 无法运行时要说明原因。
@@ -71,4 +71,3 @@ git push
 - `.env*`
 - secrets、tokens、keys、credentials
 - `.reference/`
-

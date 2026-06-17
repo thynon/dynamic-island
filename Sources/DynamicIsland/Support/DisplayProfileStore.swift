@@ -1,8 +1,12 @@
 import Foundation
-import IslandCore
+import DynamicIslandCore
 
 struct DisplayProfileStore: Sendable {
     static let defaultProfileURL = FileManager.default
+        .homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/Dynamic Island", isDirectory: true)
+        .appendingPathComponent("display-profile.json")
+    static let legacyProfileURL = FileManager.default
         .homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/Island", isDirectory: true)
         .appendingPathComponent("display-profile.json")
@@ -41,7 +45,17 @@ struct DisplayProfileStore: Sendable {
     }
 
     private func loadProfile() -> DisplayProfile? {
-        guard let data = try? Data(contentsOf: profileURL) else {
+        if let data = try? Data(contentsOf: profileURL) {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try? decoder.decode(DisplayProfile.self, from: data)
+        }
+
+        guard profileURL == Self.defaultProfileURL || profileURL == Self.legacyProfileURL else {
+            return nil
+        }
+
+        guard let data = try? Data(contentsOf: Self.legacyProfileURL) else {
             return nil
         }
 

@@ -1,6 +1,6 @@
 import AppKit
 import Foundation
-import IslandCore
+import DynamicIslandCore
 
 struct MusicPlaybackSnapshot: Equatable, Sendable {
     let isPlaying: Bool

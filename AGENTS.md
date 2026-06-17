@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-为 **14 寸 MacBook Pro** 打造的灵动岛式桌面应用。纯黑药丸外壳与物理 camera housing 视觉融合，在顶部 32pt 空间提供任务状态、音频波形和本机使用量数据面板。
+为 **14 寸 MacBook Pro** 打造的 **Dynamic Island** 式桌面应用。纯黑药丸外壳与物理 camera housing 视觉融合，在顶部 32pt 空间提供任务状态、音频波形和本机使用量数据面板。
 
 - **不是** Vibe Island 功能复刻——`.reference/vibe-island/` 仅用于学习外壳、布局和动效
 - AI 会话监控、hook、socket、审批、终端跳转、SSH、更新等功能**不能自动纳入**，除非用户明确选择
@@ -16,16 +16,16 @@
 
 ```bash
 # 核心检查（每次改动后必须跑）
-swift run IslandCoreChecks
+swift run DynamicIslandCoreChecks
 
 # 编译主程序
-swift build --product Island
+swift build --product DynamicIsland
 
 # 构建 + 签名 + 打包 + 启动（唯一运行入口）
 ./script/build_and_run.sh
 
 # 启动后检查进程健康
-pid=$(pgrep -x Island | head -n 1)
+pid=$(pgrep -x DynamicIsland | head -n 1)
 ps -o pid,stat,pcpu,pmem,etime,command -p "$pid"
 
 # 调试任务状态（短时覆盖，约 5 分钟后过期）
@@ -35,8 +35,8 @@ ps -o pid,stat,pcpu,pmem,etime,command -p "$pid"
 ./script/build_and_run.sh --telemetry
 ```
 
-- 每次修改核心行为后至少运行 `swift run IslandCoreChecks`
-- 涉及可执行 App 时追加 `swift build --product Island` 和 `./script/build_and_run.sh`
+- 每次修改核心行为后至少运行 `swift run DynamicIslandCoreChecks`
+- 涉及可执行 App 时追加 `swift build --product DynamicIsland` 和 `./script/build_and_run.sh`
 - 不能跑的命令要明确说明原因，不要假装通过
 - 修改动效或波形后建议检查 CPU；稳定空闲状态不应长期高占用
 
@@ -47,7 +47,7 @@ ps -o pid,stat,pcpu,pmem,etime,command -p "$pid"
 ```
 Package.swift
 Sources/
-  IslandCore/                  # 纯逻辑层，无 UI 依赖
+  DynamicIslandCore/            # 纯逻辑层，无 UI 依赖
     NotchMetrics.swift         #   刘海尺寸真相源（收起 245×32，展开 700×230）
     IslandTopStatusBandLayout.swift  #   展开态顶部 32pt 区域合同
     IslandAnimationProfile.swift     #   统一动画参数
@@ -58,7 +58,7 @@ Sources/
     UsageTrendTimeline.swift   #   趋势时间线（小时/天分桶）
     DataPanelMode.swift        #   二级模式（Trends/Overview/All）
     ...
-  Island/                      # AppKit + SwiftUI UI 层
+  DynamicIsland/               # AppKit + SwiftUI UI 层
     Controllers/
       IslandPanelController.swift  #   NSPanel + 展开/收起 + 轮询
     Views/
@@ -114,8 +114,8 @@ script/build_and_run.sh             #   构建 + 签名 + 打包 + 启动
 - **最小改动**：不顺手重构、重命名、格式化未触及代码
 - **复用优先**：先用已有 helper/组件/模式
 - **不推测性抽象**：不处理未出现的边界情况
-- **IslandCore** = 纯逻辑层，无 AppKit/SwiftUI import
-- **Island** = UI 层，通过 `@Published IslandOverlayState` 驱动
+- **DynamicIslandCore** = 纯逻辑层，无 AppKit/SwiftUI import
+- **DynamicIsland** = UI 层，通过 `@Published IslandOverlayState` 驱动
 - **动画参数**统一走 `IslandAnimationProfile.default`，不硬编码
 - **测试**用 `expectEqual()` + 字符串源码检查 + 数值断言
 - 用中文沟通
@@ -132,10 +132,10 @@ script/build_and_run.sh             #   构建 + 签名 + 打包 + 启动
 
 ## 完成前检查清单
 
-- [ ] 核心行为变更后，`swift run IslandCoreChecks` 通过
-- [ ] 涉及可执行 App 时，`swift build --product Island` 通过
+- [ ] 核心行为变更后，`swift run DynamicIslandCoreChecks` 通过
+- [ ] 涉及可执行 App 时，`swift build --product DynamicIsland` 通过
 - [ ] UI/布局变更时，`./script/build_and_run.sh` 确认
-- [ ] 修改动效、波形或轮询后，检查 Island 进程 CPU 没有长期高占用
+- [ ] 修改动效、波形或轮询后，检查 DynamicIsland 进程 CPU 没有长期高占用
 - [ ] 未破坏顶部 32pt 布局合同
 - [ ] 未引入默认自动动画
 - [ ] 未合并 Claude 数据到 Codex 统计
@@ -176,8 +176,8 @@ script/build_and_run.sh             #   构建 + 签名 + 打包 + 启动
 - 文件: 变更内容
 
 ## 验证
-- swift run IslandCoreChecks: 通过/失败
-- swift build --product Island: 通过/失败
+- swift run DynamicIslandCoreChecks: 通过/失败
+- swift build --product DynamicIsland: 通过/失败
 - CPU: x%
 
 ## 未运行

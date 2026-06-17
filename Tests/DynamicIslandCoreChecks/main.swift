@@ -1,5 +1,5 @@
 import Foundation
-import IslandCore
+import DynamicIslandCore
 
 private func expectEqual<T: Equatable>(
     _ actual: T,
@@ -85,13 +85,13 @@ private func testDisplayProfileDerivesMetricsFromScreenSignature() {
 }
 
 private func testKeepsExpandableEmptyShellOnly() {
-    let overlay = source("Sources/Island/Views/IslandOverlayView.swift")
-    let controller = source("Sources/Island/Controllers/IslandPanelController.swift")
-    let appDelegate = source("Sources/Island/Controllers/AppDelegate.swift")
-    let trackingView = source("Sources/Island/Views/IslandTrackingHostingView.swift")
-    let musicSource = source("Sources/Island/Support/MusicPlaybackDataSource.swift")
-    let avatarView = source("Sources/Island/Views/ClosedMusicAvatarView.swift")
-    let waveformView = source("Sources/Island/Views/ClosedMusicWaveformView.swift")
+    let overlay = source("Sources/DynamicIsland/Views/IslandOverlayView.swift")
+    let controller = source("Sources/DynamicIsland/Controllers/IslandPanelController.swift")
+    let appDelegate = source("Sources/DynamicIsland/Controllers/AppDelegate.swift")
+    let trackingView = source("Sources/DynamicIsland/Views/IslandTrackingHostingView.swift")
+    let musicSource = source("Sources/DynamicIsland/Support/MusicPlaybackDataSource.swift")
+    let avatarView = source("Sources/DynamicIsland/Views/ClosedMusicAvatarView.swift")
+    let waveformView = source("Sources/DynamicIsland/Views/ClosedMusicWaveformView.swift")
     let buildScript = source("script/build_and_run.sh")
 
     expectEqual(overlay.contains("Color.white"), true, "overlay uses a white shell fill")
@@ -128,9 +128,9 @@ private func testKeepsExpandableEmptyShellOnly() {
     expectEqual(controller.contains("metrics.closedHeight + Self.closedHoverBottomSlack"), true, "closed canvas keeps bottom room for hover shadow")
     expectEqual(controller.contains("startMusicPlaybackPolling"), true, "panel polls supported music players for compact accessories")
     expectEqual(controller.contains("ScreenMetricsProvider.profile"), true, "panel keeps display-aware shell sizing")
-    expectEqual(appDelegate.contains("Show Island"), true, "status menu can show the shell")
-    expectEqual(appDelegate.contains("Hide Island"), true, "status menu can hide the shell")
-    expectEqual(appDelegate.contains("Quit Island"), true, "status menu can quit the app")
+    expectEqual(appDelegate.contains("Show Dynamic Island"), true, "status menu can show the shell")
+    expectEqual(appDelegate.contains("Hide Dynamic Island"), true, "status menu can hide the shell")
+    expectEqual(appDelegate.contains("Quit Dynamic Island"), true, "status menu can quit the app")
     expectEqual(buildScript.contains("NSAppleEventsUsageDescription"), true, "app declares Apple Events usage for music playback detection")
 
     let removedActiveReferences = [
@@ -160,15 +160,15 @@ private func testKeepsExpandableEmptyShellOnly() {
 
 private func testRemovedFeatureFilesAreGone() {
     let removedFiles = [
-        "Sources/Island/Views/StatusDotView.swift",
-        "Sources/Island/Views/AudioWaveformView.swift",
-        "Sources/Island/Views/DataPanelView.swift",
-        "Sources/Island/Views/TemporaryFileShelfView.swift",
-        "Sources/Island/Support/AudioPlaybackDataSource.swift",
-        "Sources/Island/Support/TaskActivityDataSource.swift",
-        "Sources/Island/Support/TemporaryFileShelfStore.swift",
-        "Sources/Island/Support/CodexUsageDataSource.swift",
-        "Sources/Island/Support/CCSwitchUsageDataSource.swift"
+        "Sources/DynamicIsland/Views/StatusDotView.swift",
+        "Sources/DynamicIsland/Views/AudioWaveformView.swift",
+        "Sources/DynamicIsland/Views/DataPanelView.swift",
+        "Sources/DynamicIsland/Views/TemporaryFileShelfView.swift",
+        "Sources/DynamicIsland/Support/AudioPlaybackDataSource.swift",
+        "Sources/DynamicIsland/Support/TaskActivityDataSource.swift",
+        "Sources/DynamicIsland/Support/TemporaryFileShelfStore.swift",
+        "Sources/DynamicIsland/Support/CodexUsageDataSource.swift",
+        "Sources/DynamicIsland/Support/CCSwitchUsageDataSource.swift"
     ]
 
     for path in removedFiles {
@@ -179,7 +179,7 @@ private func testRemovedFeatureFilesAreGone() {
 private func testBuildScriptStillPackagesSignedApp() {
     let buildScript = source("script/build_and_run.sh")
 
-    expectEqual(buildScript.contains("swift build --product \"$APP_NAME\""), true, "build script compiles Island product")
+    expectEqual(buildScript.contains("swift build --product \"$APP_PRODUCT_NAME\""), true, "build script compiles Dynamic Island product")
     expectEqual(buildScript.contains("codesign --force --deep --sign"), true, "build script signs the app bundle")
     expectEqual(buildScript.contains("/usr/bin/open -n \"$APP_BUNDLE\""), true, "build script can launch the packaged app")
     expectEqual(buildScript.contains("--verify"), true, "build script keeps verification mode")
@@ -191,4 +191,4 @@ testKeepsExpandableEmptyShellOnly()
 testRemovedFeatureFilesAreGone()
 testBuildScriptStillPackagesSignedApp()
 
-print("IslandCoreChecks passed")
+print("DynamicIslandCoreChecks passed")

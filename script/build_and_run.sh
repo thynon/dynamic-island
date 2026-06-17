@@ -2,18 +2,19 @@
 set -euo pipefail
 
 MODE="${1:-run}"
-APP_NAME="Island"
-BUNDLE_ID="cx.island.mvp"
+APP_PRODUCT_NAME="DynamicIsland"
+APP_DISPLAY_NAME="Dynamic Island"
+BUNDLE_ID="cx.dynamicisland.mvp"
 MIN_SYSTEM_VERSION="14.0"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
-APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
+APP_BUNDLE="$DIST_DIR/$APP_DISPLAY_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
-APP_BINARY="$APP_MACOS/$APP_NAME"
+APP_BINARY="$APP_MACOS/$APP_PRODUCT_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
-CODESIGN_IDENTITY="${ISLAND_CODESIGN_IDENTITY:-}"
+CODESIGN_IDENTITY="${DYNAMIC_ISLAND_CODESIGN_IDENTITY:-${ISLAND_CODESIGN_IDENTITY:-}}"
 
 if [[ -z "$CODESIGN_IDENTITY" ]]; then
   CODESIGN_IDENTITY="$(
@@ -26,10 +27,10 @@ if [[ -z "$CODESIGN_IDENTITY" ]]; then
   CODESIGN_IDENTITY="-"
 fi
 
-pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+pkill -x "$APP_PRODUCT_NAME" >/dev/null 2>&1 || true
 
-swift build --product "$APP_NAME"
-BUILD_BINARY="$(swift build --show-bin-path)/$APP_NAME"
+swift build --product "$APP_PRODUCT_NAME"
+BUILD_BINARY="$(swift build --show-bin-path)/$APP_PRODUCT_NAME"
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_MACOS"
@@ -42,11 +43,11 @@ cat >"$INFO_PLIST" <<PLIST
 <plist version="1.0">
 <dict>
   <key>CFBundleExecutable</key>
-  <string>$APP_NAME</string>
+  <string>$APP_PRODUCT_NAME</string>
   <key>CFBundleIdentifier</key>
   <string>$BUNDLE_ID</string>
   <key>CFBundleName</key>
-  <string>$APP_NAME</string>
+  <string>$APP_DISPLAY_NAME</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>LSMinimumSystemVersion</key>
@@ -56,7 +57,7 @@ cat >"$INFO_PLIST" <<PLIST
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSAppleEventsUsageDescription</key>
-  <string>Island checks Music and Spotify playback state to show compact playback indicators.</string>
+  <string>Dynamic Island checks Music and Spotify playback state to show compact playback indicators.</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>
@@ -79,7 +80,7 @@ case "$MODE" in
     ;;
   --logs|logs)
     open_app
-    /usr/bin/log stream --info --style compact --predicate "process == \"$APP_NAME\""
+    /usr/bin/log stream --info --style compact --predicate "process == \"$APP_PRODUCT_NAME\""
     ;;
   --telemetry|telemetry)
     open_app
@@ -88,7 +89,7 @@ case "$MODE" in
   --verify|verify)
     open_app
     sleep 1
-    pgrep -x "$APP_NAME" >/dev/null
+    pgrep -x "$APP_PRODUCT_NAME" >/dev/null
     ;;
   *)
     echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2

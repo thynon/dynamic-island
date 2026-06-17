@@ -4,7 +4,7 @@ import AppKit
 private var retainedAppDelegate: AppDelegate?
 
 @main
-enum IslandMain {
+enum DynamicIslandMain {
     @MainActor
     static func main() {
         let app = NSApplication.shared
