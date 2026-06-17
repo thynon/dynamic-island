@@ -27,6 +27,68 @@ Each event should use this shape:
 
 ## Events
 
+### 2026-06-17 - set-white-compact-shell-sizing
+- Reason: User clarified the compact island background itself should become white, with closed height `32pt`, default width increased by `10pt`, music width increased by `10pt`, and closed corner radius set to `16pt`.
+- Changed:
+  - `Sources/IslandCore/NotchMetrics.swift`
+  - `Sources/Island/Views/IslandOverlayView.swift`
+  - `Sources/Island/Views/ClosedMusicAvatarView.swift`
+  - `Sources/Island/Views/ClosedMusicWaveformView.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Default closed shell is `195x32`, music closed shell is `260x32`, closed top and bottom radii are both `16pt`, the shell fill is white, and compact music accessories use black contrast on the white shell while preserving real artwork rendering.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; cleared display-profile cache; `./script/build_and_run.sh --verify`; visual crop confirmed the white compact shell at the top of the screen; CPU settled near idle.
+- Rollback: Revert this event's changed files to return to the prior black compact shell with `185pt` default width and `250pt` music width.
+
+### 2026-06-17 - restore-previous-empty-shell-hover-version
+- Reason: User asked to restore the previous version after trying the physical-notch-matched default shell.
+- Changed:
+  - `Sources/IslandCore/NotchMetrics.swift`
+  - `Sources/Island/Views/IslandOverlayView.swift`
+  - `Sources/Island/Controllers/IslandPanelController.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Restored the previous empty-shell hover behavior: closed shell width is back to `245` (`cameraHousingWidth + statusSlotWidth * 2`), mouse enter still does not auto-expand, and hover uses the prior subtle `scaleEffect` plus faint `.shadow`.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh --verify`; process check showed Island running from `dist/Island.app` near idle CPU.
+- Rollback: Reapply `match-default-shell-to-physical-notch` if the physical-notch-matched closed shell is wanted again.
+
+### 2026-06-17 - match-default-shell-to-physical-notch
+- Reason: User felt the hover shadow looked visually detached, like a lower image layer, and clarified that the default shell should match the physical notch size, corner feel, and transition so it is not visibly an extra block until the cursor moves over it.
+- Changed:
+  - `Sources/IslandCore/NotchMetrics.swift`
+  - `Sources/Island/Views/IslandOverlayView.swift`
+  - `Sources/Island/Controllers/IslandPanelController.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Closed shell width now matches `cameraHousingWidth` instead of adding side slots. Hover no longer uses SwiftUI external `.shadow`; it reveals the shell by subtly widening and lowering the black shape itself, with extra transparent window slack to avoid clipping. Click-to-expand remains available.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh --verify`; process check showed Island running from `dist/Island.app` near idle CPU.
+- Rollback: Restore `closedShellWidth` to `cameraHousingWidth + statusSlotWidth * 2` and reintroduce external hover shadow if the wider always-visible shell is desired again.
+
+### 2026-06-17 - change-empty-shell-hover-to-preview-only
+- Reason: User provided full-screen reference screenshots showing that hover should only make the closed shell feel slightly larger with a faint shadow, not auto-expand into the large panel.
+- Changed:
+  - `Sources/Island/Views/IslandOverlayView.swift`
+  - `Sources/Island/Controllers/IslandPanelController.swift`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Empty shell now tracks hover state separately from expanded state. Mouse enter sets a subtle closed-shell preview effect; it no longer calls `setExpanded(true)`. The closed transparent window keeps extra horizontal and bottom room so the hover scale and shadow are not clipped. Click-to-expand remains available.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh --verify`; process check showed Island running from `dist/Island.app` near idle CPU.
+- Rollback: Restore mouse-enter to call `setExpanded(true)` and remove `isHovered`, hover scale/shadow, and closed hover slack if automatic hover expansion is wanted again.
+
+### 2026-06-17 - strip-to-empty-expandable-shell
+- Reason: User provided screenshots of the expanded Stats/content panel and collapsed status dot, then requested deleting those functions and content after making a fresh backup, leaving only an empty shell that can still expand normally.
+- Changed:
+  - `Sources/Island/Views/IslandOverlayView.swift`
+  - `Sources/Island/Views/IslandTrackingHostingView.swift`
+  - `Sources/Island/Controllers/IslandPanelController.swift`
+  - `Sources/Island/Controllers/AppDelegate.swift`
+  - `script/build_and_run.sh`
+  - `Tests/IslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Island now keeps the top black shell, notch-aware sizing, mouse hover expansion, tap-to-expand, menu-bar show/hide/quit, and app packaging. The visible status dot, waveform, Stats/Data panel, Files shelf, file-drop handling, task activity polling, audio polling, completion preview, and related TCC usage descriptions are removed from the active app path.
+- Verify: `swift run IslandCoreChecks`; `swift build --product Island`; `./script/build_and_run.sh --verify`; process check showed Island running from `dist/Island.app` near idle CPU after restart.
+- Rollback: Restore these files from the user's backup or revert this event's changed files to bring back the Stats panel, status dot, waveform, File Shelf, task/audio polling, and completion feedback.
+
 ### 2026-06-17 - restore-expanded-island-to-pre-size-change
 - Reason: User decided to roll back the expanded island size adjustment and return to the version before the `900x205` layout tuning.
 - Changed:

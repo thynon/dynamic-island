@@ -78,13 +78,14 @@ public struct StatusDotSoftGlowStyle: Equatable, Sendable {
 public struct NotchMetrics: Equatable, Sendable {
     public static let defaultCameraHousingWidth: CGFloat = 185
     public static let defaultClosedHeight: CGFloat = 32
-    public static let statusSlotWidth: CGFloat = 30
-    public static let openWidth: CGFloat = 700
+    public static let statusSlotWidth: CGFloat = 5
+    public static let musicStatusSlotWidth: CGFloat = 37.5
+    public static let openWidth: CGFloat = 650
     public static let openHeight: CGFloat = 230
     public static let overshootWidth: CGFloat = 732
     public static let overshootHeight: CGFloat = 254
     public static let topCornerRadius: CGFloat = 16
-    public static let closedBottomCornerRadius: CGFloat = 17
+    public static let closedBottomCornerRadius: CGFloat = 16
     public static let openBottomCornerRadius: CGFloat = 24
     public static let defaultClosedStatusDotGuardInset: CGFloat = 2
     public static let defaultClosedStatusDotHaloDiameter: CGFloat = 10
@@ -107,6 +108,7 @@ public struct NotchMetrics: Equatable, Sendable {
     public static let defaultExpandedContentBottomGuard: CGFloat = defaultExpandedContentBottomEdgeInset
     public static let compactNotchedReferenceWidth: CGFloat = 1512
     public static let compactNotchedReferenceHeight: CGFloat = 982
+    private static let openWidthReductionPerSide: CGFloat = 25
 
     public let cameraHousingWidth: CGFloat
     public let closedHeight: CGFloat
@@ -124,6 +126,10 @@ public struct NotchMetrics: Equatable, Sendable {
         cameraHousingWidth + (statusSlotWidth * 2)
     }
 
+    public var musicClosedShellWidth: CGFloat {
+        cameraHousingWidth + (Self.musicStatusSlotWidth * 2)
+    }
+
     public var statusDotCenterXFromShellCenter: CGFloat {
         -(cameraHousingWidth / 2) - (statusSlotWidth / 2)
     }
@@ -134,6 +140,14 @@ public struct NotchMetrics: Equatable, Sendable {
 
     public var cameraHousingRightEdgeX: CGFloat {
         statusSlotWidth + cameraHousingWidth
+    }
+
+    public var musicCameraHousingLeftEdgeX: CGFloat {
+        Self.musicStatusSlotWidth
+    }
+
+    public var musicCameraHousingRightEdgeX: CGFloat {
+        Self.musicStatusSlotWidth + cameraHousingWidth
     }
 
     public var closedStatusDotGuardInset: CGFloat {
@@ -162,6 +176,38 @@ public struct NotchMetrics: Equatable, Sendable {
 
     public var closedStatusDotCenterY: CGFloat {
         closedHeight / 2
+    }
+
+    public var closedMusicAccessoryGuardInset: CGFloat {
+        2
+    }
+
+    public var closedMusicAccessorySize: CGFloat {
+        min(18, max(1, closedMusicAccessorySafeMaxX - closedMusicAccessorySafeMinX))
+    }
+
+    public var closedLeftMusicAccessoryCenterX: CGFloat {
+        (closedMusicAccessorySafeMinX + closedMusicAccessorySafeMaxX) / 2
+    }
+
+    public var closedRightMusicAccessoryCenterX: CGFloat {
+        musicClosedShellWidth - closedLeftMusicAccessoryCenterX
+    }
+
+    public var closedMusicAccessoryCenterY: CGFloat {
+        closedHeight / 2
+    }
+
+    private var closedMusicAccessoryVisibleEdgeInset: CGFloat {
+        min(max(closedTopCornerRadius, closedBottomCornerRadius), closedHeight / 2)
+    }
+
+    private var closedMusicAccessorySafeMinX: CGFloat {
+        closedMusicAccessoryVisibleEdgeInset + closedMusicAccessoryGuardInset
+    }
+
+    private var closedMusicAccessorySafeMaxX: CGFloat {
+        musicCameraHousingLeftEdgeX - closedMusicAccessoryGuardInset
     }
 
     public var expandedStatusDotCenterX: CGFloat {
@@ -279,7 +325,7 @@ public struct NotchMetrics: Equatable, Sendable {
     ) {
         let resolvedCameraHousingWidth = max(1, cameraHousingWidth.rounded())
         let resolvedClosedHeight = max(1, closedHeight.rounded())
-        let resolvedStatusSlotWidth = max(1, statusSlotWidth.rounded())
+        let resolvedStatusSlotWidth = max(0, statusSlotWidth)
         let resolvedClosedShellWidth = resolvedCameraHousingWidth + (resolvedStatusSlotWidth * 2)
         let resolvedOpenWidth = max(resolvedClosedShellWidth, openWidth.rounded())
         let resolvedOpenHeight = max(resolvedClosedHeight, openHeight.rounded())
@@ -335,8 +381,10 @@ public struct NotchMetrics: Equatable, Sendable {
         hasCameraHousing: Bool
     ) -> CGSize {
         if hasCameraHousing {
-            let maxWidth = max(openWidth, min(frameWidth - 80, 820))
-            let width = min(maxWidth, max(openWidth, frameWidth * 0.45)).rounded()
+            let totalWidthReduction = openWidthReductionPerSide * 2
+            let maxWidth = max(openWidth, min(frameWidth - 80, 820) - totalWidthReduction)
+            let preferredWidth = max(openWidth, (frameWidth * 0.45) - totalWidthReduction)
+            let width = min(maxWidth, preferredWidth).rounded()
             let height = min(252, max(openHeight, frameHeight * 0.21)).rounded()
             return CGSize(width: width, height: height)
         }

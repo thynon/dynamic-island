@@ -56,9 +56,7 @@ cat >"$INFO_PLIST" <<PLIST
   <key>NSHighResolutionCapable</key>
   <true/>
   <key>NSAppleEventsUsageDescription</key>
-  <string>Island checks music playback state so the waveform can reflect real playing audio.</string>
-  <key>NSScreenCaptureUsageDescription</key>
-  <string>Island samples system audio so the waveform can reflect real playback energy.</string>
+  <string>Island checks Music and Spotify playback state to show compact playback indicators.</string>
   <key>NSPrincipalClass</key>
   <string>NSApplication</string>
 </dict>

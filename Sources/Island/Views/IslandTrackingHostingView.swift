@@ -5,21 +5,8 @@ import SwiftUI
 final class IslandTrackingHostingView: NSHostingView<IslandOverlayView> {
     var onMouseEntered: (() -> Void)?
     var onMouseExited: (() -> Void)?
-    var onFileDragEntered: (([URL]) -> Void)?
-    var onFileDragExited: (() -> Void)?
-    var onFileDrop: (([URL]) -> Void)?
 
     private var trackingArea: NSTrackingArea?
-
-    required init(rootView: IslandOverlayView) {
-        super.init(rootView: rootView)
-        registerForDraggedTypes([.fileURL])
-    }
-
-    @MainActor @preconcurrency required dynamic init?(coder: NSCoder) {
-        super.init(coder: coder)
-        registerForDraggedTypes([.fileURL])
-    }
 
     override func updateTrackingAreas() {
         if let trackingArea {
@@ -48,31 +35,5 @@ final class IslandTrackingHostingView: NSHostingView<IslandOverlayView> {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
-    }
-
-    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        let fileURLs = draggedFileURLs(from: sender)
-        guard !fileURLs.isEmpty else { return [] }
-        onFileDragEntered?(fileURLs)
-        return .copy
-    }
-
-    override func draggingExited(_ sender: (any NSDraggingInfo)?) {
-        onFileDragExited?()
-    }
-
-    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        let fileURLs = draggedFileURLs(from: sender)
-        guard !fileURLs.isEmpty else { return false }
-        onFileDrop?(fileURLs)
-        return true
-    }
-
-    private func draggedFileURLs(from sender: any NSDraggingInfo) -> [URL] {
-        let pasteboard = sender.draggingPasteboard
-        return pasteboard.readObjects(
-            forClasses: [NSURL.self],
-            options: [.urlReadingFileURLsOnly: true]
-        ) as? [URL] ?? []
     }
 }
