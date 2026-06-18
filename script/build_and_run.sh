@@ -80,6 +80,10 @@ open_debug_music_signal_app() {
   /usr/bin/open -n "$APP_BUNDLE" --env ISLAND_DEBUG_MUSIC_SIGNAL_FILE="$DEBUG_MUSIC_SIGNAL_FILE"
 }
 
+open_debug_calibration_app() {
+  /usr/bin/open -n "$APP_BUNDLE" --env ISLAND_DEBUG_CALIBRATION=1 --env ISLAND_DEBUG_EXPANDED_ON_LAUNCH=1
+}
+
 case "$MODE" in
   run)
     open_app
@@ -94,6 +98,9 @@ case "$MODE" in
   --debug-music-signal|debug-music-signal)
     open_debug_music_signal_app
     ;;
+  --debug-calibration|debug-calibration)
+    open_debug_calibration_app
+    ;;
   --telemetry|telemetry)
     open_app
     /usr/bin/log stream --info --style compact --predicate "subsystem == \"$BUNDLE_ID\""
@@ -104,7 +111,7 @@ case "$MODE" in
     pgrep -x "$APP_PRODUCT_NAME" >/dev/null
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--debug-music-signal|--telemetry|--verify]" >&2
+    echo "usage: $0 [run|--debug|--logs|--debug-music-signal|--debug-calibration|--telemetry|--verify]" >&2
     exit 2
     ;;
 esac

@@ -4,17 +4,17 @@
 
 **Goal:** Group temporary shelf files by type and show a persistent dashed shelf boundary.
 
-**Architecture:** File type classification lives in `IslandCore` so it is testable without UI dependencies. `TemporaryFileShelfView` renders only non-empty category sections inside one dashed rounded shelf range, while preserving existing Open, Remove, Clear, and drag-out behavior.
+**Architecture:** File type classification lives in `DynamicIslandCore` so it is testable without UI dependencies. `TemporaryFileShelfView` renders only non-empty category sections inside one dashed rounded shelf range, while preserving existing Open, Remove, Clear, and drag-out behavior.
 
-**Tech Stack:** Swift 6, SwiftPM, SwiftUI, AppKit file icons, `IslandCoreChecks`.
+**Tech Stack:** Swift 6, SwiftPM, SwiftUI, AppKit file icons, `DynamicIslandCoreChecks`.
 
 ---
 
 ### Task 1: Core File Category Model
 
 **Files:**
-- Modify: `Sources/IslandCore/TemporaryFileShelf.swift`
-- Modify: `Tests/IslandCoreChecks/main.swift`
+- Modify: `Sources/DynamicIslandCore/TemporaryFileShelf.swift`
+- Modify: `Tests/DynamicIslandCoreChecks/main.swift`
 
 - [x] **Step 1: Write the failing test**
 
@@ -22,7 +22,7 @@ Add checks that `.png`, `.xlsx`, `.pptx`, `.key`, `.pdf`, and unknown extensions
 
 - [x] **Step 2: Run test to verify it fails**
 
-Run: `swift run IslandCoreChecks`
+Run: `swift run DynamicIslandCoreChecks`
 Expected: FAIL because `TemporaryShelfFileCategory` and `category` do not exist yet.
 
 - [x] **Step 3: Write minimal implementation**
@@ -31,14 +31,14 @@ Add `TemporaryShelfFileCategory` and derive each `TemporaryShelfItem.category` f
 
 - [x] **Step 4: Run test to verify it passes**
 
-Run: `swift run IslandCoreChecks`
+Run: `swift run DynamicIslandCoreChecks`
 Expected: PASS.
 
 ### Task 2: Grouped Shelf Rendering And Dashed Bounds
 
 **Files:**
-- Modify: `Sources/Island/Views/TemporaryFileShelfView.swift`
-- Modify: `Tests/IslandCoreChecks/main.swift`
+- Modify: `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+- Modify: `Tests/DynamicIslandCoreChecks/main.swift`
 
 - [x] **Step 1: Write the failing test**
 
@@ -46,7 +46,7 @@ Add source checks that the view references `TemporaryShelfFileCategory`, renders
 
 - [x] **Step 2: Run test to verify it fails**
 
-Run: `swift run IslandCoreChecks`
+Run: `swift run DynamicIslandCoreChecks`
 Expected: FAIL because the current view renders one mixed grid and has no non-empty dashed shelf bounds.
 
 - [x] **Step 3: Write minimal implementation**
@@ -55,7 +55,7 @@ Group items by category order: Images, Documents, Spreadsheets, Presentations, O
 
 - [x] **Step 4: Run test to verify it passes**
 
-Run: `swift run IslandCoreChecks`
+Run: `swift run DynamicIslandCoreChecks`
 Expected: PASS.
 
 ### Task 3: Verification And Memory
@@ -65,7 +65,7 @@ Expected: PASS.
 
 - [x] **Step 1: Build the app**
 
-Run: `swift build --product Island`
+Run: `swift build --product DynamicIsland`
 Expected: build succeeds.
 
 - [x] **Step 2: Restart the app**
@@ -78,7 +78,7 @@ Expected: build/sign/package/start succeeds.
 Run:
 
 ```bash
-pid=$(pgrep -x Island | head -n 1)
+pid=$(pgrep -x DynamicIsland | head -n 1)
 ps -o pid,stat,pcpu,pmem,etime,command -p "$pid"
 ```
 

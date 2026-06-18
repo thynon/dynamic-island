@@ -2,6 +2,28 @@ import AppKit
 import SwiftUI
 import DynamicIslandCore
 
+enum IslandPrimaryFeature: String, CaseIterable, Equatable, Identifiable {
+    case tasks
+    case data
+    case tools
+    case settings
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .tasks:
+            "Tasks"
+        case .data:
+            "Data"
+        case .tools:
+            "Tools"
+        case .settings:
+            "Settings"
+        }
+    }
+}
+
 @MainActor
 final class IslandOverlayState: ObservableObject {
     @Published var isExpanded = false
@@ -12,6 +34,8 @@ final class IslandOverlayState: ObservableObject {
     @Published var musicSkipFeedbackDirection: MusicSkipDirection?
     @Published var musicSkipGestureProgress: CGFloat = 0
     @Published var isMusicSkipArmed = false
+    @Published var isCalibrationOverlayVisible = false
+    @Published var calibrationHasCameraHousing = false
     @Published var musicPlayback: MusicPlaybackSnapshot = .idle
     @Published var temporaryFileShelf = TemporaryFileShelf()
     @Published var temporaryFileShelfSelectedItemIDs: Set<TemporaryShelfItem.ID> = []
@@ -19,6 +43,7 @@ final class IslandOverlayState: ObservableObject {
     @Published var isFileShelfOverlayVisible = false
     @Published var isFileShelfPinnedOpen = false
     @Published var isFileDropTargetActive = false
+    @Published var selectedPrimaryFeature: IslandPrimaryFeature = .tasks
 }
 
 struct IslandOverlayView: View {
@@ -26,6 +51,7 @@ struct IslandOverlayView: View {
     @ObservedObject var state: IslandOverlayState
     let onExpansionChange: @MainActor (Bool) -> Void
     let onSelectTemporaryFile: @MainActor (TemporaryShelfItem.ID, Bool) -> Void
+    let onSelectTemporaryFiles: @MainActor ([TemporaryShelfItem.ID], Bool) -> Void
     let onRemoveTemporaryFile: @MainActor (TemporaryShelfItem.ID) -> Void
     let onClearTemporaryFiles: @MainActor () -> Void
     let onStartTemporaryFileDrag: @MainActor ([TemporaryShelfItem.ID]) -> Void
@@ -47,6 +73,7 @@ struct IslandOverlayView: View {
         state: IslandOverlayState,
         onExpansionChange: @escaping @MainActor (Bool) -> Void = { _ in },
         onSelectTemporaryFile: @escaping @MainActor (TemporaryShelfItem.ID, Bool) -> Void = { _, _ in },
+        onSelectTemporaryFiles: @escaping @MainActor ([TemporaryShelfItem.ID], Bool) -> Void = { _, _ in },
         onRemoveTemporaryFile: @escaping @MainActor (TemporaryShelfItem.ID) -> Void = { _ in },
         onClearTemporaryFiles: @escaping @MainActor () -> Void = {},
         onStartTemporaryFileDrag: @escaping @MainActor ([TemporaryShelfItem.ID]) -> Void = { _ in },
@@ -60,6 +87,7 @@ struct IslandOverlayView: View {
         self.state = state
         self.onExpansionChange = onExpansionChange
         self.onSelectTemporaryFile = onSelectTemporaryFile
+        self.onSelectTemporaryFiles = onSelectTemporaryFiles
         self.onRemoveTemporaryFile = onRemoveTemporaryFile
         self.onClearTemporaryFiles = onClearTemporaryFiles
         self.onStartTemporaryFileDrag = onStartTemporaryFileDrag
@@ -101,7 +129,7 @@ struct IslandOverlayView: View {
     }
 
     private var canvasHeight: CGFloat {
-        state.usesOpenCanvas ? metrics.openCompletionFeedbackWindowSize.height : metrics.musicTrackInfoShellHeight + closedHoverBottomSlack
+        state.usesOpenCanvas ? metrics.openCanvasWindowSize.height : metrics.musicTrackInfoShellHeight + closedHoverBottomSlack
     }
 
     private var showsHoverPreview: Bool {
@@ -135,13 +163,25 @@ struct IslandOverlayView: View {
         musicSkipEdgeExpansionMax * musicSkipProgress
     }
 
+    private var shellHorizontalScale: CGFloat {
+        hoverPreviewScale * hiddenShellHorizontalScale
+    }
+
     private var shellHorizontalOffset: CGFloat {
         guard let direction = state.musicSkipFeedbackDirection else { return 0 }
-        return direction == .next ? musicSkipEdgeExpansion / 2 : -musicSkipEdgeExpansion / 2
+        let scaledExpansion = musicSkipEdgeExpansion * shellHorizontalScale
+        return direction == .next ? scaledExpansion / 2 : -scaledExpansion / 2
     }
 
     private var contentOriginShiftX: CGFloat {
-        state.musicSkipFeedbackDirection == .previous ? musicSkipEdgeExpansion : 0
+        switch state.musicSkipFeedbackDirection {
+        case .previous:
+            musicSkipEdgeExpansion
+        case .next:
+            0
+        case nil:
+            0
+        }
     }
 
     private var showsMusicAccessories: Bool {
@@ -229,6 +269,10 @@ struct IslandOverlayView: View {
         metrics.expandedTopStatusBandLayout.fileShelfButtonFrame(width: 68, height: 22)
     }
 
+    private var primaryNavigationFrame: CGRect {
+        metrics.expandedTopStatusBandLayout.primaryNavigationFrame(width: 168, height: 22)
+    }
+
     private var expandAnimation: Animation {
         .interactiveSpring(
             response: animationProfile.expandResponse,
@@ -249,6 +293,13 @@ struct IslandOverlayView: View {
     private var islandShell: some View {
         ZStack(alignment: .topLeading) {
             shellFillColor
+
+            if isExpanded {
+                PrimaryFeatureSwitcher(selection: $state.selectedPrimaryFeature)
+                    .frame(width: primaryNavigationFrame.width, height: primaryNavigationFrame.height)
+                    .position(x: primaryNavigationFrame.midX, y: primaryNavigationFrame.midY)
+                    .zIndex(4)
+            }
 
             if isExpanded, state.temporaryFileShelf.hasItems {
                 FileShelfButton(
@@ -271,6 +322,7 @@ struct IslandOverlayView: View {
                     onDone: onDoneFileShelfOverlay,
                     onClearSelection: onClearTemporaryFileSelection,
                     onSelectItem: onSelectTemporaryFile,
+                    onSelectItems: onSelectTemporaryFiles,
                     onRemoveItem: onRemoveTemporaryFile,
                     onClear: onClearTemporaryFiles,
                     onDragStarted: onStartTemporaryFileDrag,
@@ -322,6 +374,19 @@ struct IslandOverlayView: View {
             if let direction = state.musicSkipFeedbackDirection, showsMusicAccessories, !showsTrackInfo {
                 musicSkipFeedbackIcon(direction)
             }
+
+            if state.isCalibrationOverlayVisible {
+                CalibrationOverlayView(
+                    layout: IslandCalibrationLayout(metrics: metrics, hasCameraHousing: state.calibrationHasCameraHousing),
+                    metrics: metrics,
+                    shellWidth: shellWidth,
+                    shellHeight: shellHeight,
+                    isExpanded: isExpanded,
+                    isMusicShell: showsMusicAccessories,
+                    hasCameraHousing: state.calibrationHasCameraHousing
+                )
+                .zIndex(20)
+            }
         }
             .frame(width: shellWidth, height: shellHeight, alignment: .top)
             .clipShape(
@@ -359,6 +424,135 @@ struct IslandOverlayView: View {
             .animation(.easeOut(duration: 0.14), value: state.isHovered)
             .animation(.easeOut(duration: 0.14), value: state.isFileDropTargetActive)
             .animation(.easeOut(duration: 0.14), value: state.isFileShelfOverlayVisible)
+    }
+}
+
+private struct CalibrationOverlayView: View {
+    let layout: IslandCalibrationLayout
+    let metrics: NotchMetrics
+    let shellWidth: CGFloat
+    let shellHeight: CGFloat
+    let isExpanded: Bool
+    let isMusicShell: Bool
+    let hasCameraHousing: Bool
+
+    private let calibrationSafeRegionYOffset: CGFloat = 2
+
+    private var contentBoundaryFrame: CGRect {
+        CGRect(x: 0, y: 0, width: shellWidth, height: shellHeight)
+            .insetBy(dx: metrics.contentBoundaryInset, dy: metrics.contentBoundaryInset)
+    }
+
+    private var currentCameraHousingForbiddenRegion: CGRect? {
+        guard hasCameraHousing else { return nil }
+        if isExpanded {
+            return layout.cameraHousingForbiddenRegion
+        }
+        let minX = isMusicShell ? metrics.musicCameraHousingLeftEdgeX : metrics.cameraHousingLeftEdgeX
+        return CGRect(x: minX, y: 0, width: metrics.cameraHousingWidth, height: metrics.closedHeight)
+    }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            IslandShape(
+                topCornerRadius: isExpanded ? metrics.openTopCornerRadius : metrics.closedTopCornerRadius,
+                concaveTopRadius: isExpanded ? metrics.openTopCornerRadius : metrics.closedConcaveTopRadius,
+                bottomCornerRadius: isExpanded ? metrics.openBottomCornerRadius : metrics.closedBottomCornerRadius,
+                baseHeight: shellHeight
+            )
+            .stroke(Color.white.opacity(0.75), lineWidth: 1)
+            .frame(width: shellWidth, height: shellHeight)
+
+            calibrationBoundaryRect(contentBoundaryFrame)
+
+            if isExpanded {
+                calibrationRect(
+                    layout.leftSafeRegion.offsetBy(dx: 0, dy: calibrationSafeRegionYOffset),
+                    color: .green,
+                    fillOpacity: 0.06,
+                    dash: [3, 2]
+                )
+                calibrationRect(
+                    layout.rightSafeRegion.offsetBy(dx: 0, dy: calibrationSafeRegionYOffset),
+                    color: .cyan,
+                    fillOpacity: 0.06,
+                    dash: [3, 2]
+                )
+            }
+
+            if let cameraHousingForbiddenRegion = currentCameraHousingForbiddenRegion {
+                calibrationRect(cameraHousingForbiddenRegion, color: .red, fillOpacity: 0.18, dash: [])
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(hasCameraHousing ? "Camera housing" : "No camera housing")
+                Text("5pt content boundary  shell \(Int(shellWidth))x\(Int(shellHeight))")
+                Text("camera \(Int(metrics.cameraHousingWidth))  open \(Int(metrics.openWidth))x\(Int(metrics.openHeight))")
+            }
+            .font(.system(size: 7, weight: .medium, design: .monospaced))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 3)
+            .background(Color.black.opacity(0.62), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .position(x: min(shellWidth - 74, max(74, shellWidth / 2)), y: max(14, shellHeight - 18))
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private func calibrationRect(
+        _ rect: CGRect,
+        color: Color,
+        fillOpacity: Double,
+        dash: [CGFloat]
+    ) -> some View {
+        Rectangle()
+            .fill(color.opacity(fillOpacity))
+            .overlay(
+                Rectangle()
+                    .strokeBorder(color.opacity(0.72), style: StrokeStyle(lineWidth: 1, dash: dash))
+            )
+            .frame(width: rect.width, height: rect.height)
+            .position(x: rect.midX, y: rect.midY)
+    }
+
+    private func calibrationBoundaryRect(_ rect: CGRect) -> some View {
+        Rectangle()
+            .fill(Color.yellow.opacity(0.03))
+            .overlay(
+                Rectangle()
+                    .strokeBorder(
+                        Color.yellow.opacity(0.95),
+                        style: StrokeStyle(lineWidth: 1.25, dash: [5, 3])
+                    )
+            )
+            .frame(width: rect.width, height: rect.height)
+            .position(x: rect.midX, y: rect.midY)
+    }
+}
+
+private struct PrimaryFeatureSwitcher: View {
+    @Binding var selection: IslandPrimaryFeature
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(IslandPrimaryFeature.allCases) { feature in
+                Button {
+                    selection = feature
+                } label: {
+                    Text(feature.title)
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, minHeight: 22)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(selection == feature ? .white.opacity(0.16) : .white.opacity(0.05))
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .foregroundStyle(.white)
     }
 }
 

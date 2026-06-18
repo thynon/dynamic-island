@@ -1,80 +1,5 @@
 import CoreGraphics
 
-public struct StatusDotSoftGlowStyle: Equatable, Sendable {
-    public let haloDiameter: CGFloat
-    public let outerSourceDiameter: CGFloat
-    public let mediumHaloDiameter: CGFloat
-    public let ringDiameter: CGFloat
-    public let coreDiameter: CGFloat
-    public let outerBlurRadius: CGFloat
-    public let mediumBlurRadius: CGFloat
-    public let ringBlurRadius: CGFloat
-    public let ringLineWidth: CGFloat
-    public let coreShadowRadius: CGFloat
-    public let coreShadowOpacity: CGFloat
-    public let highlightDiameter: CGFloat
-    public let highlightOpacity: CGFloat
-    public let solidCoreOpacity: CGFloat
-
-    public var renderClipDiameter: CGFloat {
-        haloDiameter
-    }
-
-    public init(
-        haloDiameter: CGFloat,
-        outerSourceDiameter: CGFloat,
-        mediumHaloDiameter: CGFloat,
-        ringDiameter: CGFloat,
-        coreDiameter: CGFloat,
-        outerBlurRadius: CGFloat,
-        mediumBlurRadius: CGFloat,
-        ringBlurRadius: CGFloat,
-        ringLineWidth: CGFloat,
-        coreShadowRadius: CGFloat,
-        coreShadowOpacity: CGFloat,
-        highlightDiameter: CGFloat,
-        highlightOpacity: CGFloat,
-        solidCoreOpacity: CGFloat
-    ) {
-        self.haloDiameter = haloDiameter
-        self.outerSourceDiameter = outerSourceDiameter
-        self.mediumHaloDiameter = mediumHaloDiameter
-        self.ringDiameter = ringDiameter
-        self.coreDiameter = coreDiameter
-        self.outerBlurRadius = outerBlurRadius
-        self.mediumBlurRadius = mediumBlurRadius
-        self.ringBlurRadius = ringBlurRadius
-        self.ringLineWidth = ringLineWidth
-        self.coreShadowRadius = coreShadowRadius
-        self.coreShadowOpacity = coreShadowOpacity
-        self.highlightDiameter = highlightDiameter
-        self.highlightOpacity = highlightOpacity
-        self.solidCoreOpacity = solidCoreOpacity
-    }
-
-    public static func previousSoftGlow(haloDiameter: CGFloat) -> StatusDotSoftGlowStyle {
-        let halo = max(1, haloDiameter.rounded())
-        let core = min(2.2, max(1.6, halo * 0.20))
-        let ring = max(core + 5.8, halo * 0.84)
-        return StatusDotSoftGlowStyle(
-            haloDiameter: halo,
-            outerSourceDiameter: max(core + 6.8, halo * 0.92),
-            mediumHaloDiameter: max(core + 4.8, halo * 0.72),
-            ringDiameter: ring,
-            coreDiameter: core,
-            outerBlurRadius: max(1.8, halo * 0.20),
-            mediumBlurRadius: max(0.8, halo * 0.10),
-            ringBlurRadius: 0.8,
-            ringLineWidth: 1.0,
-            coreShadowRadius: 0,
-            coreShadowOpacity: 0,
-            highlightDiameter: 0,
-            highlightOpacity: 0,
-            solidCoreOpacity: 0
-        )
-    }
-}
-
 public struct NotchMetrics: Equatable, Sendable {
     public static let defaultCameraHousingWidth: CGFloat = 185
     public static let defaultClosedHeight: CGFloat = 32
@@ -89,14 +14,7 @@ public struct NotchMetrics: Equatable, Sendable {
     public static let closedInnerCornerRadius: CGFloat = 7
     public static let openBottomCornerRadius: CGFloat = 24
     public static let defaultContentBoundaryInset: CGFloat = 5
-    public static let defaultClosedStatusDotHaloDiameter: CGFloat = 10
-    public static let defaultClosedCompletionBounceDrop: CGFloat = 14
-    public static let defaultClosedCompletionBounceSlack: CGFloat = defaultClosedCompletionBounceDrop + 2
-    public static let defaultExpandedStatusDotLeadingInset: CGFloat = 25
-    public static let defaultExpandedAudioWaveformWidth: CGFloat = 128
-    public static let defaultExpandedAudioWaveformHeight: CGFloat = 22
-    public static let defaultExpandedAudioWaveformLeadingInset: CGFloat = 80
-    public static let defaultStatusDotDirectionalOvershootOffset: CGFloat = 0
+    public static let defaultClosedCanvasBottomSlack: CGFloat = 16
     public static let compactNotchedReferenceWidth: CGFloat = 1512
     public static let compactNotchedReferenceHeight: CGFloat = 982
     private static let openWidthReductionPerSide: CGFloat = 25
@@ -123,10 +41,6 @@ public struct NotchMetrics: Equatable, Sendable {
         Self.defaultMusicTrackInfoShellHeight
     }
 
-    public var statusDotCenterXFromShellCenter: CGFloat {
-        -(cameraHousingWidth / 2) - (statusSlotWidth / 2)
-    }
-
     public var cameraHousingLeftEdgeX: CGFloat {
         statusSlotWidth
     }
@@ -143,7 +57,7 @@ public struct NotchMetrics: Equatable, Sendable {
         Self.musicStatusSlotWidth + cameraHousingWidth
     }
 
-    public var closedStatusDotGuardInset: CGFloat {
+    public var contentBoundaryInset: CGFloat {
         Self.defaultContentBoundaryInset
     }
 
@@ -151,32 +65,8 @@ public struct NotchMetrics: Equatable, Sendable {
         Self.defaultClosedConcaveTopRadius
     }
 
-    public var closedStatusDotHaloDiameter: CGFloat {
-        Self.defaultClosedStatusDotHaloDiameter
-    }
-
-    public var statusDotDirectionalOvershootOffset: CGFloat {
-        Self.defaultStatusDotDirectionalOvershootOffset
-    }
-
-    public var expandedStatusDotHaloDiameter: CGFloat {
-        closedStatusDotHaloDiameter
-    }
-
-    public var statusDotSoftGlowStyle: StatusDotSoftGlowStyle {
-        .previousSoftGlow(haloDiameter: closedStatusDotHaloDiameter)
-    }
-
-    public var closedStatusDotCenterX: CGFloat {
-        cameraHousingLeftEdgeX - closedStatusDotGuardInset - (closedStatusDotHaloDiameter / 2)
-    }
-
-    public var closedStatusDotCenterY: CGFloat {
-        closedHeight / 2
-    }
-
     public var closedMusicAccessoryGuardInset: CGFloat {
-        Self.defaultContentBoundaryInset
+        contentBoundaryInset
     }
 
     public var closedMusicAccessorySize: CGFloat {
@@ -210,14 +100,6 @@ public struct NotchMetrics: Equatable, Sendable {
         musicCameraHousingLeftEdgeX - closedMusicAccessoryGuardInset
     }
 
-    public var expandedStatusDotCenterX: CGFloat {
-        Self.defaultExpandedStatusDotLeadingInset
-    }
-
-    public var expandedStatusDotCenterY: CGFloat {
-        closedStatusDotCenterY
-    }
-
     public var expandedMusicArtworkCenterX: CGFloat {
         48
     }
@@ -230,31 +112,8 @@ public struct NotchMetrics: Equatable, Sendable {
         closedMusicAccessoryCenterY
     }
 
-    public var expandedAudioWaveformSize: CGSize {
-        CGSize(
-            width: Self.defaultExpandedAudioWaveformWidth,
-            height: Self.defaultExpandedAudioWaveformHeight
-        )
-    }
-
-    public var closedAudioWaveformCenterX: CGFloat {
-        expandedAudioWaveformCenterX
-    }
-
-    public var closedAudioWaveformCenterY: CGFloat {
-        closedStatusDotCenterY
-    }
-
-    public var expandedAudioWaveformCenterX: CGFloat {
-        Self.defaultExpandedAudioWaveformLeadingInset + (expandedAudioWaveformSize.width / 2)
-    }
-
-    public var expandedAudioWaveformCenterY: CGFloat {
-        closedAudioWaveformCenterY
-    }
-
     public var expandedContentGuardInset: CGFloat {
-        Self.defaultContentBoundaryInset
+        contentBoundaryInset
     }
 
     public var expandedHorizontalContentPadding: CGFloat {
@@ -262,27 +121,23 @@ public struct NotchMetrics: Equatable, Sendable {
     }
 
     public var expandedContentBottomEdgeInset: CGFloat {
-        Self.defaultContentBoundaryInset
+        contentBoundaryInset
     }
 
     public var expandedContentBottomCornerClearance: CGFloat {
-        Self.defaultContentBoundaryInset
+        contentBoundaryInset
     }
 
     public var expandedContentBottomGuard: CGFloat {
-        Self.defaultContentBoundaryInset
+        contentBoundaryInset
     }
 
-    public var closedCompletionBounceDrop: CGFloat {
-        Self.defaultClosedCompletionBounceDrop
+    public var closedCanvasWindowSize: CGSize {
+        CGSize(width: closedShellWidth, height: closedHeight + Self.defaultClosedCanvasBottomSlack)
     }
 
-    public var closedCompletionFeedbackWindowSize: CGSize {
-        CGSize(width: closedShellWidth, height: closedHeight + Self.defaultClosedCompletionBounceSlack)
-    }
-
-    public var openCompletionFeedbackWindowSize: CGSize {
-        CGSize(width: openWidth, height: openHeight + Self.defaultClosedCompletionBounceSlack)
+    public var openCanvasWindowSize: CGSize {
+        CGSize(width: openWidth, height: openHeight + Self.defaultClosedCanvasBottomSlack)
     }
 
     public static let preview14Inch = NotchMetrics(

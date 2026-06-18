@@ -4,12 +4,12 @@
 
 - 将默认展开态宽度从 700pt 调整为 680pt，对应左右各缩小 10pt。
 - 保持闭合态宽度、hover 预览、点击展开和空壳状态不变。
-- 重新打包 `dist/Island.app`，并生成版本包 `output/Island-empty-shell-hover-expanded-680-2026-06-17-1621.zip`。
+- 重新打包 `dist/Dynamic Island.app`，并生成当时的历史调试 zip 包。
 
 ## 验证
 
-- `swift run IslandCoreChecks`：通过。
-- `swift build --product Island`：通过。
+- `swift run DynamicIslandCoreChecks`：通过。
+- `swift build --product DynamicIsland`：通过。
 - `./script/build_and_run.sh --verify`：通过。
 
 ## 未运行

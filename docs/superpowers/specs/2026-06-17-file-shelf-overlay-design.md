@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add a temporary file shelf to Island. Users can drag files to the notch area, pause briefly, and drop files into a dedicated shelf view. The shelf is an overlay mode that can cover `Status`, `Stats`, and `Tools` content without becoming a new first-level feature.
+Add a temporary file shelf to Island. Users can drag files to the notch area, pause briefly, and drop files into a dedicated shelf view. The shelf is an overlay mode that can cover the normal expanded content without becoming a new first-level feature.
 
 ## Confirmed Behavior
 
@@ -21,13 +21,13 @@ Add a temporary file shelf to Island. Users can drag files to the notch area, pa
 - Persisting shelf contents across app restarts.
 - Copying files into an Island-owned storage folder.
 - Cloud sync, AirDrop, share sheet, compression, tagging, folders, search, or preview editing.
-- Adding `Files` as a permanent first-level `Status / Stats / Tools` feature.
+- Adding `Files` as a permanent first-level feature.
 
 ## Architecture
 
 ### Core Model
 
-Add a small pure model in `IslandCore`:
+Add a small pure model in `DynamicIslandCore`:
 
 - `TemporaryShelfItem`: stable ID, original file URL, display name, optional file extension, added date, expiry date.
 - `TemporaryShelf`: ordered item list plus helpers for add, remove, clear, prune expired, and `hasItems`.
@@ -36,7 +36,7 @@ The model must not import AppKit or SwiftUI.
 
 ### App Layer Store
 
-Add an in-memory `TemporaryFileShelfStore` in `Sources/Island/Support/`.
+Add an in-memory `TemporaryFileShelfStore` in `Sources/DynamicIsland/Support/`.
 
 - Stores file URLs only for the current process lifetime.
 - Deduplicates by file URL when adding the same file again.
@@ -65,7 +65,7 @@ Extend `IslandOverlayState` with file shelf state:
 - `isFileShelfPinnedOpen`
 - `isFileDropTargetActive`
 
-The overlay mode takes precedence over normal `DataPanelView` content. `Status / Stats / Tools` selection remains remembered and unchanged underneath.
+The overlay mode takes precedence over the normal expanded shell content and does not create a separate top-level mode.
 
 ### Top Safe-Band Button
 
@@ -99,7 +99,7 @@ The shelf overlay should match the existing dark Island visual language:
 - Actions: open, remove, clear all.
 - Drag-out support should be included if feasible in the first implementation; otherwise keep the source URL available and prioritize click-to-open and remove.
 
-The UI must avoid the physical camera housing and should not move the established right-side `Status / Stats / Tools` switcher.
+The UI must avoid the physical camera housing and keep existing top-band controls inside the safe layout regions.
 
 ## Error Handling
 
@@ -109,7 +109,7 @@ The UI must avoid the physical camera housing and should not move the establishe
 
 ## Testing
 
-Add `IslandCoreChecks` coverage for:
+Add `DynamicIslandCoreChecks` coverage for:
 
 - Shelf item expiry at 24h.
 - Deduping by file URL.
@@ -125,4 +125,3 @@ Manual verification:
 - Hover/open and click `Files`: shelf opens and stays expanded.
 - Remove all files: button disappears and Island can collapse.
 - Restart app: shelf is empty.
-

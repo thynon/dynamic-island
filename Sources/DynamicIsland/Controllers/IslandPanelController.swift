@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import DynamicIslandCore
 
@@ -26,6 +27,7 @@ final class IslandPanelController {
     private static let debugMusicSignalEnvironmentKey = "ISLAND_DEBUG_MUSIC_SIGNAL_FILE"
     private static let debugExpandedOnLaunchEnvironmentKey = "ISLAND_DEBUG_EXPANDED_ON_LAUNCH"
     private static let debugFileShelfURLsEnvironmentKey = "ISLAND_DEBUG_FILE_SHELF_URLS"
+    private static let debugCalibrationEnvironmentKey = "ISLAND_DEBUG_CALIBRATION"
 
     private var metrics: NotchMetrics
     private var isExpanded = false
@@ -38,8 +40,10 @@ final class IslandPanelController {
     private var activeScrollGesture: ActiveScrollGesture = .none
     private var accumulatedScrollDeltaX: CGFloat = 0
     private var accumulatedScrollDeltaY: CGFloat = 0
-    private var pendingHorizontalSkipDirection: MusicSkipDirection?
-    private var isHorizontalSkipArmed = false
+    private var horizontalMusicSkipGesture = MusicSkipGestureStateMachine(
+        commitDistance: IslandPanelController.horizontalCommitDistance,
+        cancelDistance: IslandPanelController.horizontalCancelDistance
+    )
     private var scrollGestureUsesExplicitPhase = false
     private var hasTriggeredHorizontalSkip = false
     private var scrollSuppressionUntil: Date?
@@ -47,6 +51,7 @@ final class IslandPanelController {
     private let overlayState: IslandOverlayState
     private let hostingView: IslandTrackingHostingView
     private let animationProfile = IslandAnimationProfile.default
+    private let runtimeSettings: IslandRuntimeSettings
     private let musicPlaybackDataSource: any MusicPlaybackDataSource
     private let temporaryFileShelfStore = TemporaryFileShelfStore()
     private let interactionLogger = IslandInteractionLogger()
@@ -55,17 +60,24 @@ final class IslandPanelController {
     private var debugMusicSignalTask: Task<Void, Never>?
     private var musicSkipTask: Task<Void, Never>?
     private var temporaryFileShelfPruningTask: Task<Void, Never>?
+    nonisolated(unsafe) private var runtimeSettingsCancellable: AnyCancellable?
     nonisolated(unsafe) private var hiddenScrollMonitor: Any?
 
     init(
         screen: NSScreen? = NSScreen.main,
+        runtimeSettings: IslandRuntimeSettings = IslandRuntimeSettings(),
         musicPlaybackDataSource: any MusicPlaybackDataSource = ScriptableMusicPlaybackDataSource()
     ) {
+        self.runtimeSettings = runtimeSettings
         self.musicPlaybackDataSource = musicPlaybackDataSource
+        runtimeSettings.isCalibrationModeEnabled = Self.shouldShowCalibrationOverlay
         let screenMetrics = ScreenMetricsProvider.profile(for: screen)
         metrics = screenMetrics
 
         let overlayState = IslandOverlayState()
+        overlayState.isCalibrationOverlayVisible = runtimeSettings.isCalibrationModeEnabled
+        overlayState.calibrationHasCameraHousing = Self.hasCameraHousing(on: screen ?? NSScreen.main)
+        overlayState.selectedPrimaryFeature = .tasks
         self.overlayState = overlayState
 
         panel = NSPanel(
@@ -89,6 +101,7 @@ final class IslandPanelController {
         }
         var launchMetadata = Self.displayLogMetadata(for: screen ?? NSScreen.main, metrics: metrics)
         launchMetadata["launchMode"] = Self.debugMusicSignalFileURL == nil ? "musicPlaybackPolling" : "debugMusicSignal"
+        launchMetadata["calibrationOverlay"] = Self.shouldShowCalibrationOverlay
         launchMetadata["bundleIdentifier"] = Bundle.main.bundleIdentifier ?? ""
         launchMetadata["executable"] = Bundle.main.executableURL?.lastPathComponent ?? "DynamicIsland"
         launchMetadata["logFile"] = interactionLogger.logURL.lastPathComponent
@@ -99,6 +112,7 @@ final class IslandPanelController {
             startMusicPlaybackPolling()
         }
         startTemporaryFileShelfPruning()
+        observeRuntimeSettings()
     }
 
     private static func displayLogMetadata(for screen: NSScreen?, metrics: NotchMetrics) -> [String: Any] {
@@ -114,10 +128,7 @@ final class IslandPanelController {
             return metadata
         }
 
-        let hasCameraHousing = screen.safeAreaInsets.top > 0
-            && screen.auxiliaryTopLeftArea != nil
-            && screen.auxiliaryTopRightArea != nil
-        metadata["hasCameraHousing"] = hasCameraHousing
+        metadata["hasCameraHousing"] = hasCameraHousing(on: screen)
         metadata["screenWidth"] = Int(screen.frame.width.rounded())
         metadata["screenHeight"] = Int(screen.frame.height.rounded())
         metadata["safeAreaTopInset"] = Int(screen.safeAreaInsets.top.rounded())
@@ -133,11 +144,19 @@ final class IslandPanelController {
         return metadata
     }
 
+    private static func hasCameraHousing(on screen: NSScreen?) -> Bool {
+        guard let screen else { return false }
+        return screen.safeAreaInsets.top > 0
+            && screen.auxiliaryTopLeftArea != nil
+            && screen.auxiliaryTopRightArea != nil
+    }
+
     deinit {
         musicPlaybackPollingTask?.cancel()
         debugMusicSignalTask?.cancel()
         musicSkipTask?.cancel()
         temporaryFileShelfPruningTask?.cancel()
+        runtimeSettingsCancellable?.cancel()
         trackInfoDismissWorkItem?.cancel()
         musicSkipFeedbackWorkItem?.cancel()
         gestureResetWorkItem?.cancel()
@@ -161,6 +180,7 @@ final class IslandPanelController {
         let screen = NSScreen.main
         let previousMetrics = metrics
         metrics = ScreenMetricsProvider.profile(for: screen)
+        overlayState.calibrationHasCameraHousing = Self.hasCameraHousing(on: screen)
         if metrics != previousMetrics {
             interactionLogger.log("display.metrics.changed", metadata: Self.displayLogMetadata(for: screen, metrics: metrics))
         }
@@ -175,6 +195,13 @@ final class IslandPanelController {
                 on: screen
             )
         )
+    }
+
+    func resetDisplayAdaptation() {
+        try? FileManager.default.removeItem(at: DisplayProfileStore.defaultProfileURL)
+        try? FileManager.default.removeItem(at: DisplayProfileStore.legacyProfileURL)
+        interactionLogger.log("display.adaptation.reset")
+        refreshForCurrentScreen()
     }
 
     private func setExpanded(_ expanded: Bool) {
@@ -237,6 +264,80 @@ final class IslandPanelController {
         .easeOut(duration: animationProfile.collapseDuration)
     }
 
+    private var hideAnimationDuration: TimeInterval {
+        0.22 * runtimeSettings.hideAnimationScale
+    }
+
+    private func scaledGestureThreshold(_ value: CGFloat) -> CGFloat {
+        value * CGFloat(runtimeSettings.gestureThresholdMultiplier)
+    }
+
+    private func observeRuntimeSettings() {
+        let featureSettings = Publishers.CombineLatest3(
+            runtimeSettings.$isFileShelfEnabled,
+            runtimeSettings.$isMusicModeEnabled,
+            runtimeSettings.$isCalibrationModeEnabled
+        )
+        let tuningSettings = Publishers.CombineLatest(
+            runtimeSettings.$gestureSensitivity,
+            runtimeSettings.$hideAnimationStrength
+        )
+        runtimeSettingsCancellable = Publishers.CombineLatest(featureSettings, tuningSettings)
+        .dropFirst()
+        .sink { [weak self] featureValues, tuningValues in
+            let (fileShelfEnabled, musicModeEnabled, calibrationModeEnabled) = featureValues
+            let (gestureSensitivity, hideAnimationStrength) = tuningValues
+            Task { @MainActor in
+                self?.runtimeSettingsDidChange(
+                    fileShelfEnabled: fileShelfEnabled,
+                    musicModeEnabled: musicModeEnabled,
+                    calibrationModeEnabled: calibrationModeEnabled,
+                    gestureSensitivity: gestureSensitivity,
+                    hideAnimationStrength: hideAnimationStrength
+                )
+            }
+        }
+    }
+
+    private func runtimeSettingsDidChange(
+        fileShelfEnabled: Bool,
+        musicModeEnabled: Bool,
+        calibrationModeEnabled: Bool,
+        gestureSensitivity: Double,
+        hideAnimationStrength: Double
+    ) {
+        if !fileShelfEnabled {
+            overlayState.isFileShelfOverlayVisible = false
+            overlayState.isFileShelfPinnedOpen = false
+            overlayState.isFileDropTargetActive = false
+        }
+
+        if !musicModeEnabled {
+            musicPlaybackPollingTask?.cancel()
+            musicPlaybackPollingTask = nil
+            overlayState.musicPlayback = .idle
+            overlayState.isTrackInfoPresented = false
+            overlayState.musicSkipFeedbackDirection = nil
+            overlayState.musicSkipGestureProgress = 0
+            overlayState.isMusicSkipArmed = false
+            resetScrollGesture(shouldCommitPendingSkip: false)
+        } else if Self.debugMusicSignalFileURL == nil, musicPlaybackPollingTask == nil {
+            startMusicPlaybackPolling()
+        }
+
+        overlayState.isCalibrationOverlayVisible = calibrationModeEnabled
+        overlayState.calibrationHasCameraHousing = Self.hasCameraHousing(on: NSScreen.main)
+
+        interactionLogger.log("settings.changed", metadata: [
+            "fileShelfEnabled": fileShelfEnabled,
+            "musicModeEnabled": musicModeEnabled,
+            "calibrationModeEnabled": calibrationModeEnabled,
+            "gestureSensitivity": gestureSensitivity,
+            "hideAnimationStrength": hideAnimationStrength,
+            "selectedPrimaryFeature": overlayState.selectedPrimaryFeature.rawValue
+        ])
+    }
+
     private func updateRootView() {
         hostingView.rootView = IslandOverlayView(
             metrics: metrics,
@@ -246,6 +347,9 @@ final class IslandPanelController {
             },
             onSelectTemporaryFile: { [weak self] itemID, extendingSelection in
                 self?.selectTemporaryFile(id: itemID, extendingSelection: extendingSelection)
+            },
+            onSelectTemporaryFiles: { [weak self] itemIDs, extendingSelection in
+                self?.selectTemporaryFiles(ids: itemIDs, extendingSelection: extendingSelection)
             },
             onRemoveTemporaryFile: { [weak self] itemID in
                 self?.removeTemporaryFile(id: itemID)
@@ -330,6 +434,7 @@ final class IslandPanelController {
     }
 
     private func canAcceptFileDrop(at dropPoint: NSPoint) -> Bool {
+        guard runtimeSettings.isFileShelfEnabled else { return false }
         guard !overlayState.isShellHidden else { return false }
         return pointInsideInteractiveShell(screenPointFromDraggingLocation(dropPoint))
     }
@@ -361,6 +466,21 @@ final class IslandPanelController {
         interactionLogger.log("file.shelf.select", metadata: [
             "selectedCount": temporaryFileShelfSelection.selectedItemIDs.count,
             "extendingSelection": extendingSelection
+        ])
+    }
+
+    private func selectTemporaryFiles(ids: [TemporaryShelfItem.ID], extendingSelection: Bool) {
+        let itemIDs = Set(ids)
+        if extendingSelection {
+            temporaryFileShelfSelection.select(temporaryFileShelfSelection.selectedItemIDs.union(itemIDs))
+        } else {
+            temporaryFileShelfSelection.select(itemIDs)
+        }
+        syncTemporaryFileShelfSelectionState()
+        interactionLogger.log("file.shelf.select", metadata: [
+            "selectedCount": temporaryFileShelfSelection.selectedItemIDs.count,
+            "extendingSelection": extendingSelection,
+            "rectangleSelection": true
         ])
     }
 
@@ -413,6 +533,7 @@ final class IslandPanelController {
     }
 
     private func openTemporaryFileShelfOverlay(pinned: Bool) {
+        guard runtimeSettings.isFileShelfEnabled else { return }
         temporaryFileShelfStore.pruneExpired()
         syncTemporaryFileShelfState()
         guard temporaryFileShelfStore.shelf.hasItems else { return }
@@ -433,6 +554,7 @@ final class IslandPanelController {
     }
 
     private func toggleTemporaryFileShelfOverlayFromButton() {
+        guard runtimeSettings.isFileShelfEnabled else { return }
         temporaryFileShelfStore.pruneExpired()
         syncTemporaryFileShelfState()
         guard temporaryFileShelfStore.shelf.hasItems else { return }
@@ -474,7 +596,7 @@ final class IslandPanelController {
     }
 
     private func setFileDropTargeted(_ targeted: Bool) {
-        let nextValue = targeted && !overlayState.isShellHidden
+        let nextValue = targeted && runtimeSettings.isFileShelfEnabled && !overlayState.isShellHidden
         guard overlayState.isFileDropTargetActive != nextValue else { return }
         withAnimation(.easeOut(duration: 0.14)) {
             overlayState.isFileDropTargetActive = nextValue
@@ -536,9 +658,10 @@ final class IslandPanelController {
             } else if !scrollGestureUsesExplicitPhase {
                 scheduleGestureReset()
             }
-            if deltaY > Self.scrollActivationThreshold {
+            let activationThreshold = scaledGestureThreshold(Self.scrollActivationThreshold)
+            if deltaY > activationThreshold {
                 setShellHidden(false)
-            } else if accumulatedScrollDeltaY > Self.scrollActivationThreshold {
+            } else if accumulatedScrollDeltaY > activationThreshold {
                 setShellHidden(false)
             }
             return
@@ -566,8 +689,9 @@ final class IslandPanelController {
     private func lockScrollGestureIfNeeded(phase: NSEvent.Phase) {
         let horizontalDominant = abs(accumulatedScrollDeltaX) > abs(accumulatedScrollDeltaY) * 1.4
         let verticalDominant = abs(accumulatedScrollDeltaY) > abs(accumulatedScrollDeltaX) * 1.4
+        let axisLockThreshold = scaledGestureThreshold(Self.gestureAxisLockThreshold)
 
-        if canHandleHorizontalMusicSkip, horizontalDominant, abs(accumulatedScrollDeltaX) >= Self.gestureAxisLockThreshold {
+        if canHandleHorizontalMusicSkip, horizontalDominant, abs(accumulatedScrollDeltaX) >= axisLockThreshold {
             activeScrollGesture = .horizontal
             interactionLogger.log("scroll.gesture.locked", metadata: [
                 "axis": "horizontal",
@@ -577,7 +701,7 @@ final class IslandPanelController {
                 "usesExplicitPhase": scrollGestureUsesExplicitPhase
             ])
             updateHorizontalMusicSkip()
-        } else if verticalDominant, abs(accumulatedScrollDeltaY) >= Self.gestureAxisLockThreshold {
+        } else if verticalDominant, abs(accumulatedScrollDeltaY) >= axisLockThreshold {
             activeScrollGesture = .vertical
             interactionLogger.log("scroll.gesture.locked", metadata: [
                 "axis": "vertical",
@@ -602,17 +726,19 @@ final class IslandPanelController {
     }
 
     private var canHandleHorizontalMusicSkip: Bool {
-        overlayState.musicPlayback.isPlaying
+        runtimeSettings.isMusicModeEnabled
+            && overlayState.musicPlayback.isPlaying
             && !isExpanded
             && !overlayState.isShellHidden
             && !overlayState.isTrackInfoPresented
     }
 
     private func updateVerticalScrollIntent() {
-        if accumulatedScrollDeltaY < -Self.scrollActivationThreshold {
+        let activationThreshold = scaledGestureThreshold(Self.scrollActivationThreshold)
+        if accumulatedScrollDeltaY < -activationThreshold {
             setShellHidden(true)
             resetScrollGesture()
-        } else if accumulatedScrollDeltaY > Self.scrollActivationThreshold {
+        } else if accumulatedScrollDeltaY > activationThreshold {
             setShellHidden(false)
         }
     }
@@ -623,82 +749,135 @@ final class IslandPanelController {
             return
         }
 
-        let direction: MusicSkipDirection = accumulatedScrollDeltaX < 0 ? .previous : .next
-        let absoluteDeltaX = abs(accumulatedScrollDeltaX)
-        let progress = min(abs(accumulatedScrollDeltaX) / Self.horizontalCommitDistance, 1)
+        syncHorizontalMusicSkipGestureSettings()
+        let previousState = horizontalMusicSkipGesture.state
+        let nextState = horizontalMusicSkipGesture.update(accumulatedDeltaX: accumulatedScrollDeltaX)
+        applyHorizontalMusicSkipGestureState(nextState, previousState: previousState)
+    }
 
-        withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.82)) {
-            overlayState.musicSkipFeedbackDirection = direction
-            overlayState.musicSkipGestureProgress = progress
+    private func syncHorizontalMusicSkipGestureSettings() {
+        let commitDistance = scaledGestureThreshold(Self.horizontalCommitDistance)
+        let cancelDistance = scaledGestureThreshold(Self.horizontalCancelDistance)
+        guard horizontalMusicSkipGesture.commitDistance != commitDistance
+            || horizontalMusicSkipGesture.cancelDistance != cancelDistance
+        else {
+            return
         }
+        horizontalMusicSkipGesture = MusicSkipGestureStateMachine(
+            commitDistance: commitDistance,
+            cancelDistance: cancelDistance
+        )
+    }
 
-        var cancelledArmedSkip = false
-        if isHorizontalSkipArmed {
-            if pendingHorizontalSkipDirection != direction {
-                cancelPendingHorizontalMusicSkip(reason: "directionChanged")
-                cancelledArmedSkip = true
-            } else if absoluteDeltaX <= Self.horizontalCancelDistance {
-                cancelPendingHorizontalMusicSkip(reason: "returnedToCancelBoundary")
-                cancelledArmedSkip = true
+    private func applyHorizontalMusicSkipGestureState(
+        _ state: MusicSkipGestureState,
+        previousState: MusicSkipGestureState
+    ) {
+        switch state {
+        case .idle:
+            break
+        case .tracking(let direction, let progress):
+            withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.82)) {
+                overlayState.musicSkipFeedbackDirection = musicSkipDirection(from: direction)
+                overlayState.musicSkipGestureProgress = progress
+                overlayState.isMusicSkipArmed = false
             }
-        }
-
-        if !isHorizontalSkipArmed, !cancelledArmedSkip, progress >= 1 {
-            armPendingHorizontalMusicSkip(direction)
+        case .armed(let direction, let progress):
+            if !Self.isArmedMusicSkipState(previousState) {
+                interactionLogger.log("music.skip.armed", metadata: [
+                    "direction": Self.musicSkipDirectionDescription(direction),
+                    "deltaX": Double(accumulatedScrollDeltaX)
+                ])
+            }
+            withAnimation(.easeOut(duration: 0.10)) {
+                overlayState.musicSkipFeedbackDirection = musicSkipDirection(from: direction)
+                overlayState.musicSkipGestureProgress = progress
+                overlayState.isMusicSkipArmed = true
+            }
+        case .cancelled(let direction):
+            if Self.isArmedMusicSkipState(previousState) {
+                logHorizontalMusicSkipCancelled(direction: direction, reason: "returnedToCancelBoundary")
+            }
+            withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.82)) {
+                overlayState.musicSkipGestureProgress = 0
+                overlayState.musicSkipFeedbackDirection = nil
+                overlayState.isMusicSkipArmed = false
+            }
+        case .committed:
+            break
         }
     }
 
-    private func armPendingHorizontalMusicSkip(_ direction: MusicSkipDirection) {
-        guard !isHorizontalSkipArmed else { return }
-        isHorizontalSkipArmed = true
-        pendingHorizontalSkipDirection = direction
-        withAnimation(.easeOut(duration: 0.10)) {
-            overlayState.isMusicSkipArmed = true
-        }
-        interactionLogger.log("music.skip.armed", metadata: [
-            "direction": direction == .next ? "next" : "previous",
-            "deltaX": Double(accumulatedScrollDeltaX)
-        ])
-    }
-
-    private func cancelPendingHorizontalMusicSkip(reason: String) {
-        guard isHorizontalSkipArmed || pendingHorizontalSkipDirection != nil else { return }
+    private func logHorizontalMusicSkipCancelled(direction: IslandMusicSkipDirection?, reason: String) {
+        guard let direction else { return }
         interactionLogger.log("music.skip.cancelled", metadata: [
             "reason": reason,
+            "direction": Self.musicSkipDirectionDescription(direction),
             "deltaX": Double(accumulatedScrollDeltaX)
         ])
-        isHorizontalSkipArmed = false
-        pendingHorizontalSkipDirection = nil
-        withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.82)) {
-            overlayState.isMusicSkipArmed = false
-        }
     }
 
-    private func commitPendingHorizontalMusicSkipIfNeeded() -> Bool {
+    private func commitPendingHorizontalMusicSkipIfNeeded(shouldCommitPendingSkip: Bool) -> Bool {
         guard
             activeScrollGesture == .horizontal,
-            isHorizontalSkipArmed,
-            let direction = pendingHorizontalSkipDirection,
             !hasTriggeredHorizontalSkip
         else {
             return false
         }
 
+        let directionBeforeFinish = horizontalMusicSkipGesture.currentDirection()
+        if horizontalMusicSkipGesture.isArmed, !shouldCommitPendingSkip {
+            logHorizontalMusicSkipCancelled(direction: directionBeforeFinish, reason: "gestureCancelled")
+        }
+
         let now = Date()
-        if let lastMusicSkipDate, now.timeIntervalSince(lastMusicSkipDate) < Self.musicSkipCooldown {
-            cancelPendingHorizontalMusicSkip(reason: "cooldown")
+        if horizontalMusicSkipGesture.isArmed,
+           shouldCommitPendingSkip,
+           let lastMusicSkipDate,
+           now.timeIntervalSince(lastMusicSkipDate) < Self.musicSkipCooldown {
+            logHorizontalMusicSkipCancelled(direction: directionBeforeFinish, reason: "cooldown")
+            _ = horizontalMusicSkipGesture.finish(shouldCommit: false)
+            return false
+        }
+
+        let finalState = horizontalMusicSkipGesture.finish(shouldCommit: shouldCommitPendingSkip)
+        guard case .committed(let direction) = finalState else {
             return false
         }
 
         hasTriggeredHorizontalSkip = true
         lastMusicSkipDate = now
         overlayState.isMusicSkipArmed = false
+        let musicDirection = musicSkipDirection(from: direction)
         interactionLogger.log("music.skip.commit", metadata: [
-            "direction": direction == .next ? "next" : "previous",
+            "direction": Self.musicSkipDirectionDescription(direction),
             "deltaX": Double(accumulatedScrollDeltaX)
         ])
-        performMusicSkip(direction)
+        performMusicSkip(musicDirection)
         return true
+    }
+
+    private func musicSkipDirection(from direction: IslandMusicSkipDirection) -> MusicSkipDirection {
+        switch direction {
+        case .previous:
+            return .previous
+        case .next:
+            return .next
+        }
+    }
+
+    private static func musicSkipDirectionDescription(_ direction: IslandMusicSkipDirection) -> String {
+        switch direction {
+        case .previous:
+            return "previous"
+        case .next:
+            return "next"
+        }
+    }
+
+    private static func isArmedMusicSkipState(_ state: MusicSkipGestureState) -> Bool {
+        if case .armed = state { return true }
+        return false
     }
 
     private func performMusicSkip(_ direction: MusicSkipDirection) {
@@ -740,9 +919,6 @@ final class IslandPanelController {
     }
 
     private func finalizeScrollGesture(shouldCommitPendingSkip: Bool) {
-        if !shouldCommitPendingSkip, activeScrollGesture == .horizontal, isHorizontalSkipArmed {
-            cancelPendingHorizontalMusicSkip(reason: "gestureCancelled")
-        }
         resetScrollGesture(shouldCommitPendingSkip: shouldCommitPendingSkip)
     }
 
@@ -752,8 +928,7 @@ final class IslandPanelController {
         activeScrollGesture = .none
         accumulatedScrollDeltaX = 0
         accumulatedScrollDeltaY = 0
-        pendingHorizontalSkipDirection = nil
-        isHorizontalSkipArmed = false
+        horizontalMusicSkipGesture.reset()
         scrollGestureUsesExplicitPhase = false
         overlayState.isMusicSkipArmed = false
         hasTriggeredHorizontalSkip = false
@@ -762,13 +937,12 @@ final class IslandPanelController {
     private func resetScrollGesture(shouldCommitPendingSkip: Bool = true) {
         gestureResetWorkItem?.cancel()
         gestureResetWorkItem = nil
-        let didCommitPendingSkip = shouldCommitPendingSkip && commitPendingHorizontalMusicSkipIfNeeded()
+        let didCommitPendingSkip = commitPendingHorizontalMusicSkipIfNeeded(shouldCommitPendingSkip: shouldCommitPendingSkip)
         let shouldDismissFeedback = activeScrollGesture == .horizontal && !didCommitPendingSkip
         activeScrollGesture = .none
         accumulatedScrollDeltaX = 0
         accumulatedScrollDeltaY = 0
-        pendingHorizontalSkipDirection = nil
-        isHorizontalSkipArmed = false
+        horizontalMusicSkipGesture.reset()
         scrollGestureUsesExplicitPhase = false
         overlayState.isMusicSkipArmed = false
         hasTriggeredHorizontalSkip = false
@@ -803,12 +977,13 @@ final class IslandPanelController {
             removeHiddenScrollMonitor()
             syncHoverWithPointer()
         }
-        withAnimation(.easeInOut(duration: 0.22)) {
+        let animationDuration = hideAnimationDuration
+        withAnimation(.easeInOut(duration: animationDuration)) {
             overlayState.isShellHidden = hidden
         }
         if hidden {
             installHiddenScrollMonitor()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration) { [weak self] in
                 guard let self, self.overlayState.isShellHidden else { return }
                 self.panel.ignoresMouseEvents = hidden
             }
@@ -930,6 +1105,11 @@ final class IslandPanelController {
 
     private static var shouldStartExpandedForDebug: Bool {
         let value = ProcessInfo.processInfo.environment[debugExpandedOnLaunchEnvironmentKey] ?? ""
+        return ["1", "true", "yes"].contains(value.lowercased())
+    }
+
+    private static var shouldShowCalibrationOverlay: Bool {
+        let value = ProcessInfo.processInfo.environment[debugCalibrationEnvironmentKey] ?? ""
         return ["1", "true", "yes"].contains(value.lowercased())
     }
 
@@ -1090,7 +1270,7 @@ final class IslandPanelController {
         usesOpenCanvas: Bool,
         showsTrackInfo: Bool = false
     ) -> CGSize {
-        guard !usesOpenCanvas else { return metrics.openCompletionFeedbackWindowSize }
+        guard !usesOpenCanvas else { return metrics.openCanvasWindowSize }
         return CGSize(
             width: metrics.musicClosedShellWidth + Self.closedCanvasHorizontalSlack,
             height: (showsTrackInfo ? metrics.musicTrackInfoShellHeight : metrics.closedHeight) + Self.closedHoverBottomSlack

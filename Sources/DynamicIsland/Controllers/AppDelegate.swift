@@ -1,12 +1,15 @@
 import AppKit
+import SwiftUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let runtimeSettings = IslandRuntimeSettings()
     private var panelController: IslandPanelController?
     private var statusItem: NSStatusItem?
+    private var settingsPopover: NSPopover?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let panelController = IslandPanelController()
+        let panelController = IslandPanelController(runtimeSettings: runtimeSettings)
         self.panelController = panelController
         configureStatusItem()
         panelController.show()
@@ -29,6 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.toolTip = "Dynamic Island MVP"
 
         let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "设置", action: #selector(toggleSettings), keyEquivalent: ","))
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Show Dynamic Island", action: #selector(showIsland), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Hide Dynamic Island", action: #selector(hideIsland), keyEquivalent: ""))
         menu.addItem(.separator())
@@ -37,6 +42,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.menu = menu
 
         statusItem = item
+    }
+
+    @objc private func toggleSettings() {
+        if settingsPopover?.isShown == true {
+            settingsPopover?.performClose(nil)
+            return
+        }
+
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentSize = NSSize(width: 260, height: 266)
+        popover.contentViewController = NSHostingController(
+            rootView: IslandSettingsView(
+                settings: runtimeSettings,
+                onResetDisplay: { [weak self] in
+                    self?.resetDisplayAdaptation()
+                }
+            )
+        )
+        settingsPopover = popover
+
+        if let button = statusItem?.button {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
     }
 
     @objc private func showIsland() {
@@ -49,6 +78,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    @objc private func resetDisplayAdaptation() {
+        panelController?.resetDisplayAdaptation()
     }
 
     @objc private func screenConfigurationDidChange() {

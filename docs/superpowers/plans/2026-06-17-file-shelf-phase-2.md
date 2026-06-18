@@ -4,17 +4,17 @@
 
 **Goal:** Complete File Shelf Phase 2 selection: click to select one item, click empty shelf area to clear, drag a visible rectangle to select multiple visible items, filter visible files by type, and drag selected files out as a real multi-file drag for external apps.
 
-**Architecture:** Selection state lives in `IslandCore` as a small value model so removal and clear behavior can be tested without SwiftUI. The file type filter also lives in `IslandCore` because its labels and matching rules are product behavior, not view-only styling. `IslandOverlayState` carries selected IDs and passes selection callbacks into `TemporaryFileShelfView`. The SwiftUI view owns only visible filter state, pointer geometry for the active rectangle gesture, and a small AppKit drag-source bridge used to export selected files as separate pasteboard items.
+**Architecture:** Selection state lives in `DynamicIslandCore` as a small value model so removal and clear behavior can be tested without SwiftUI. The file type filter also lives in `DynamicIslandCore` because its labels and matching rules are product behavior, not view-only styling. `IslandOverlayState` carries selected IDs and passes selection callbacks into `TemporaryFileShelfView`. The SwiftUI view owns only visible filter state, pointer geometry for the active rectangle gesture, and a small AppKit drag-source bridge used to export selected files as separate pasteboard items.
 
-**Tech Stack:** Swift 6, SwiftPM, SwiftUI gestures, `IslandCoreChecks`.
+**Tech Stack:** Swift 6, SwiftPM, SwiftUI gestures, `DynamicIslandCoreChecks`.
 
 ---
 
 ### Task 1: Core Selection State
 
 **Files:**
-- Modify: `Sources/IslandCore/TemporaryFileShelf.swift`
-- Modify: `Tests/IslandCoreChecks/main.swift`
+- Modify: `Sources/DynamicIslandCore/TemporaryFileShelf.swift`
+- Modify: `Tests/DynamicIslandCoreChecks/main.swift`
 
 - [x] **Step 1: Write the failing test**
 
@@ -22,7 +22,7 @@ Add tests for a `TemporaryFileShelfSelection` value that can select one ID, clea
 
 - [x] **Step 2: Run test to verify it fails**
 
-Run: `swift run IslandCoreChecks`
+Run: `swift run DynamicIslandCoreChecks`
 Expected: FAIL because `TemporaryFileShelfSelection` does not exist.
 
 - [x] **Step 3: Write minimal implementation**
@@ -31,15 +31,15 @@ Add `TemporaryFileShelfSelection` with `selectedItemIDs`, `selectOnly(_:)`, `cle
 
 - [x] **Step 4: Run test to verify it passes**
 
-Run: `swift run IslandCoreChecks`
+Run: `swift run DynamicIslandCoreChecks`
 Expected: PASS.
 
 ### Task 2: Overlay State And Selection Sync
 
 **Files:**
-- Modify: `Sources/Island/Controllers/IslandPanelController.swift`
-- Modify: `Sources/Island/Views/IslandOverlayView.swift`
-- Modify: `Tests/IslandCoreChecks/main.swift`
+- Modify: `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+- Modify: `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+- Modify: `Tests/DynamicIslandCoreChecks/main.swift`
 
 - [x] **Step 1: Write the failing test**
 
@@ -47,7 +47,7 @@ Add source checks that overlay state carries `fileShelfSelectedItemIDs`, control
 
 - [x] **Step 2: Run test to verify it fails**
 
-Run: `swift run IslandCoreChecks`
+Run: `swift run DynamicIslandCoreChecks`
 Expected: FAIL because selected IDs are not wired.
 
 - [x] **Step 3: Write minimal implementation**
@@ -56,14 +56,14 @@ Add selected IDs to overlay state and controller. When one item is selected, sto
 
 - [x] **Step 4: Run test to verify it passes**
 
-Run: `swift run IslandCoreChecks`
+Run: `swift run DynamicIslandCoreChecks`
 Expected: PASS.
 
 ### Task 3: Click Selection And Stable Highlight
 
 **Files:**
-- Modify: `Sources/Island/Views/TemporaryFileShelfView.swift`
-- Modify: `Tests/IslandCoreChecks/main.swift`
+- Modify: `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+- Modify: `Tests/DynamicIslandCoreChecks/main.swift`
 
 - [x] **Step 1: Write the failing test**
 
@@ -71,7 +71,7 @@ Add source checks that `TemporaryFileShelfView` receives `selectedItemIDs`, call
 
 - [x] **Step 2: Run test to verify it fails**
 
-Run: `swift run IslandCoreChecks`
+Run: `swift run DynamicIslandCoreChecks`
 Expected: FAIL because the view has no selection API.
 
 - [x] **Step 3: Write minimal implementation**
@@ -80,14 +80,14 @@ Pass selected IDs into the view, add click/tap selection on each tile, add empty
 
 - [x] **Step 4: Run test to verify it passes**
 
-Run: `swift run IslandCoreChecks`
+Run: `swift run DynamicIslandCoreChecks`
 Expected: PASS.
 
 ### Task 4: Rectangle Selection
 
 **Files:**
-- Modify: `Sources/Island/Views/TemporaryFileShelfView.swift`
-- Modify: `Tests/IslandCoreChecks/main.swift`
+- Modify: `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+- Modify: `Tests/DynamicIslandCoreChecks/main.swift`
 
 - [x] **Step 1: Write the failing test**
 
@@ -95,7 +95,7 @@ Add source checks for `selectionDragThreshold = 5`, `selectionRect`, `shelfItemF
 
 - [x] **Step 2: Run test to verify it fails**
 
-Run: `swift run IslandCoreChecks`
+Run: `swift run DynamicIslandCoreChecks`
 Expected: FAIL because rectangle selection is not implemented.
 
 - [x] **Step 3: Write minimal implementation**
@@ -104,15 +104,15 @@ Track item frames in a named coordinate space. A drag starting in empty shelf ar
 
 - [x] **Step 4: Run test to verify it passes**
 
-Run: `swift run IslandCoreChecks`
+Run: `swift run DynamicIslandCoreChecks`
 Expected: PASS.
 
 ### Task 5: Second-Level Filter Bar
 
 **Files:**
-- Modify: `Sources/IslandCore/TemporaryFileShelf.swift`
-- Modify: `Sources/Island/Views/TemporaryFileShelfView.swift`
-- Modify: `Tests/IslandCoreChecks/main.swift`
+- Modify: `Sources/DynamicIslandCore/TemporaryFileShelf.swift`
+- Modify: `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+- Modify: `Tests/DynamicIslandCoreChecks/main.swift`
 
 - [x] **Step 1: Write the failing test**
 
@@ -120,23 +120,23 @@ Add tests for `TemporaryFileShelfFilter` and source checks that the view renders
 
 - [x] **Step 2: Run test to verify it fails**
 
-Run: `swift run IslandCoreChecks`
+Run: `swift run DynamicIslandCoreChecks`
 Expected: FAIL because `TemporaryFileShelfFilter` does not exist.
 
 - [x] **Step 3: Write minimal implementation**
 
-Add `TemporaryFileShelfFilter` to `IslandCore`, add `selectedFilter` to `TemporaryFileShelfView`, render the filter bar below the shelf header, and derive `filteredItems` / `filteredGroupedItems` before category rendering. Selection persists across filter switches; only visible geometry is reset when switching filters.
+Add `TemporaryFileShelfFilter` to `DynamicIslandCore`, add `selectedFilter` to `TemporaryFileShelfView`, render the filter bar below the shelf header, and derive `filteredItems` / `filteredGroupedItems` before category rendering. Selection persists across filter switches; only visible geometry is reset when switching filters.
 
 - [x] **Step 4: Run test to verify it passes**
 
-Run: `swift run IslandCoreChecks`
+Run: `swift run DynamicIslandCoreChecks`
 Expected: PASS.
 
 ### Task 6: Cross-App Multi-File Drag Export
 
 **Files:**
-- Modify: `Sources/Island/Views/TemporaryFileShelfView.swift`
-- Modify: `Tests/IslandCoreChecks/main.swift`
+- Modify: `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+- Modify: `Tests/DynamicIslandCoreChecks/main.swift`
 
 - [x] **Step 1: Write the failing test**
 
@@ -144,7 +144,7 @@ Change the drag contract test so it rejects the old single-provider packing path
 
 - [x] **Step 2: Run test to verify it fails**
 
-Run: `swift run IslandCoreChecks`
+Run: `swift run DynamicIslandCoreChecks`
 Expected: FAIL while the view still uses `NSItemProvider.writingFileURLs`.
 
 - [x] **Step 3: Write minimal implementation**
@@ -156,8 +156,8 @@ Keep selection-driven `draggedItems(for:)`, but replace the packed provider path
 Run:
 
 ```bash
-swift run IslandCoreChecks
-swift build --product Island
+swift run DynamicIslandCoreChecks
+swift build --product DynamicIsland
 ```
 
 Expected: PASS.
@@ -172,8 +172,8 @@ Expected: PASS.
 Run:
 
 ```bash
-swift run IslandCoreChecks
-swift build --product Island
+swift run DynamicIslandCoreChecks
+swift build --product DynamicIsland
 ./script/build_and_run.sh
 ```
 
@@ -184,7 +184,7 @@ Expected: all succeed.
 Run:
 
 ```bash
-pid=$(pgrep -x Island | head -n 1)
+pid=$(pgrep -x DynamicIsland | head -n 1)
 ps -o pid,stat,pcpu,pmem,etime,command -p "$pid"
 ```
 

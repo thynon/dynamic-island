@@ -11,6 +11,7 @@ struct FileShelfOverlayView: View {
     let onDone: () -> Void
     let onClearSelection: () -> Void
     let onSelectItem: (TemporaryShelfItem.ID, Bool) -> Void
+    let onSelectItems: ([TemporaryShelfItem.ID], Bool) -> Void
     let onRemoveItem: (TemporaryShelfItem.ID) -> Void
     let onClear: () -> Void
     let onDragStarted: ([TemporaryShelfItem.ID]) -> Void
@@ -20,6 +21,12 @@ struct FileShelfOverlayView: View {
 
     private let emptyShelfBodyHeight: CGFloat = 86
     private let filterBarHeight: CGFloat = 20
+    private let selectionDragThreshold: CGFloat = 5
+    private let temporaryFileTileFramePreferenceKey = "temporaryFileTileFramePreferenceKey"
+
+    @State private var tileFrames: [TemporaryShelfItem.ID: CGRect] = [:]
+    @State private var selectionStartPoint: CGPoint?
+    @State private var selectionCurrentPoint: CGPoint?
 
     private let columns = [
         GridItem(.adaptive(minimum: 112, maximum: 150), spacing: 6)
@@ -35,6 +42,16 @@ struct FileShelfOverlayView: View {
 
     private var shellContentInset: CGFloat {
         max(contentBoundaryInset, topBoundaryInset)
+    }
+
+    private var selectionRect: CGRect? {
+        guard let selectionStartPoint, let selectionCurrentPoint else { return nil }
+        return CGRect(
+            x: min(selectionStartPoint.x, selectionCurrentPoint.x),
+            y: min(selectionStartPoint.y, selectionCurrentPoint.y),
+            width: abs(selectionCurrentPoint.x - selectionStartPoint.x),
+            height: abs(selectionCurrentPoint.y - selectionStartPoint.y)
+        )
     }
 
     var body: some View {
@@ -172,14 +189,65 @@ struct FileShelfOverlayView: View {
                     }
                     .padding(6)
                 }
+                .coordinateSpace(name: temporaryFileTileFramePreferenceKey)
+                .onPreferenceChange(TemporaryFileTileFramePreferenceKey.self) { frames in
+                    tileFrames = frames
+                }
                 .scrollIndicators(.never)
                 .contentShape(Rectangle())
+                .simultaneousGesture(selectionDragGesture)
+                .overlay(alignment: .topLeading) {
+                    selectionOverlay
+                }
                 .onTapGesture {
                     onClearSelection()
                 }
             }
         }
         .accessibilityValue("\(visibleItemCount) visible files")
+    }
+
+    private var selectionDragGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named(temporaryFileTileFramePreferenceKey))
+            .onChanged { value in
+                if selectionStartPoint == nil {
+                    guard !tileFrames.values.contains(where: { $0.contains(value.startLocation) }) else { return }
+                    selectionStartPoint = value.startLocation
+                }
+                selectionCurrentPoint = value.location
+
+                guard let selectionRect,
+                      selectionRect.width >= selectionDragThreshold || selectionRect.height >= selectionDragThreshold
+                else {
+                    return
+                }
+
+                let selectedIDs = visibleItems.compactMap { item -> TemporaryShelfItem.ID? in
+                    guard let frame = tileFrames[item.id], frame.intersects(selectionRect) else { return nil }
+                    return item.id
+                }
+                onSelectItems(selectedIDs, NSEvent.modifierFlags.contains(.command) || NSEvent.modifierFlags.contains(.shift))
+            }
+            .onEnded { _ in
+                selectionStartPoint = nil
+                selectionCurrentPoint = nil
+            }
+    }
+
+    @ViewBuilder
+    private var selectionOverlay: some View {
+        if let selectionRect,
+           selectionRect.width >= selectionDragThreshold || selectionRect.height >= selectionDragThreshold {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(.white.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .stroke(.white.opacity(0.55), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                )
+                .frame(width: selectionRect.width, height: selectionRect.height)
+                .position(x: selectionRect.midX, y: selectionRect.midY)
+                .allowsHitTesting(false)
+        }
     }
 
     private func fileTile(_ item: TemporaryShelfItem) -> some View {
@@ -241,6 +309,22 @@ struct FileShelfOverlayView: View {
                 .frame(width: max(proxy.size.width - 26, 0), height: proxy.size.height)
             }
         }
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: TemporaryFileTileFramePreferenceKey.self,
+                    value: [item.id: proxy.frame(in: .named(temporaryFileTileFramePreferenceKey))]
+                )
+            }
+        )
+    }
+}
+
+private struct TemporaryFileTileFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [TemporaryShelfItem.ID: CGRect] { [:] }
+
+    static func reduce(value: inout [TemporaryShelfItem.ID: CGRect], nextValue: () -> [TemporaryShelfItem.ID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
     }
 }
 
@@ -339,10 +423,18 @@ private final class TemporaryFileDragSourceNSView: NSView, NSDraggingSource {
     }
 
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
-        onDragCompleted?(activeDragItemIDs, operation != [])
+        onDragCompleted?(activeDragItemIDs, isExternalSuccessfulDrag(screenPoint: screenPoint, operation: operation))
         activeDragItemIDs = []
         mouseDownLocation = nil
         didBeginDrag = false
+    }
+
+    private func isExternalSuccessfulDrag(screenPoint: NSPoint, operation: NSDragOperation) -> Bool {
+        guard operation != [] else { return false }
+        if window?.frame.contains(screenPoint) == true {
+            return false
+        }
+        return true
     }
 
     private func itemsForDrag(startingWith item: TemporaryShelfItem) -> [TemporaryShelfItem] {

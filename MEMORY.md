@@ -27,6 +27,153 @@ Each event should use this shape:
 
 ## Events
 
+### 2026-06-18 - expanded-primary-feature-navigation
+- Reason: User wanted a first-level feature area at the blue safe-region position shown in calibration debug mode, labeled Tasks / Data / Tools / Settings.
+- Changed:
+  - `Sources/DynamicIslandCore/IslandTopStatusBandLayout.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Expanded shell now renders a compact `Tasks / Data / Tools / Settings` primary feature switcher inside the right top safe region (`rightInfoRegion`), keeping it out of the camera forbidden region. File Shelf remains independent and continues to use the left top safe region.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh`; `git diff --check`.
+- Rollback: Remove `IslandPrimaryFeature`, `PrimaryFeatureSwitcher`, and `primaryNavigationFrame` if the blue safe-region navigation needs to be replaced by another top-band layout.
+
+### 2026-06-18 - restore-file-shelf-rectangle-selection
+- Reason: User reported that File Shelf could not rectangle-select files and then drag them as a batch.
+- Changed:
+  - `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: File Shelf now collects visible tile frames, supports a 5pt-threshold rectangle selection gesture from empty list space, draws the selection rectangle, updates the selected item set, and keeps the existing selected-item multi-file drag-out path.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh`; `git diff --check`.
+- Rollback: Remove the rectangle selection gesture and `onSelectTemporaryFiles` wiring if it conflicts with AppKit external dragging.
+
+### 2026-06-18 - runtime-calibration-debug-mode
+- Reason: User wanted a debug mode that accurately shows safe regions and related island calibration guides, while keeping the existing startup debug path.
+- Changed:
+  - `Sources/DynamicIsland/Support/IslandRuntimeSettings.swift`
+  - `Sources/DynamicIsland/Views/IslandSettingsView.swift`
+  - `Sources/DynamicIsland/Controllers/AppDelegate.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Settings now includes a Chinese `调试模式` switch that toggles the existing calibration overlay at runtime. `--debug-calibration` still works and seeds the same runtime setting, so both entry points render the same 5pt boundary, shell cut line, camera forbidden area, and left/right safe regions.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; `./script/build_and_run.sh --debug-calibration`; latest launch log showed `calibrationOverlay=true`; CPU sample showed `0.0%` CPU and `0.2%` memory.
+- Rollback: Remove `isCalibrationModeEnabled` from runtime settings and restore the startup-only calibration overlay if runtime toggling causes visual or state regressions.
+
+### 2026-06-18 - file-shelf-drag-cancel-keeps-items
+- Reason: User reported that selecting a temporary file and starting a drag could make the file disappear even when the drag was accidental or cancelled.
+- Changed:
+  - `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+  - `Sources/DynamicIsland/Views/IslandSettingsView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: File Shelf drag-out now removes items only when AppKit reports a non-empty drag operation and the drop ends outside the island window. Drops back inside the island are treated as cancelled. The settings label was clarified from hide animation strength to hide animation speed because it scales hide/show duration.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh`; `git diff --check`.
+- Rollback: Restore the previous `operation != []` success check only if an external target stops reporting usable screen-point/window data.
+
+### 2026-06-18 - chinese-runtime-settings-ui
+- Reason: User confirmed the menu bar settings interface should use Chinese labels.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandSettingsView.swift`
+  - `Sources/DynamicIsland/Controllers/AppDelegate.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: The settings popover now shows Chinese labels for File Shelf, music mode, gesture sensitivity, hide animation strength, display reset, defaults, and the menu entry.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh`; `git diff --check`.
+- Rollback: Restore the previous English strings if the app needs English-only settings labels.
+
+### 2026-06-18 - runtime-menu-settings
+- Reason: User wanted a menu bar settings page for runtime toggles and sliders, with no UserDefaults persistence.
+- Changed:
+  - `Sources/DynamicIsland/Support/IslandRuntimeSettings.swift`
+  - `Sources/DynamicIsland/Views/IslandSettingsView.swift`
+  - `Sources/DynamicIsland/Controllers/AppDelegate.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: The menu bar now opens a transient Settings popover with File Shelf and Music Mode switches, gesture sensitivity and hide animation sliders, and a display adaptation reset action. Runtime settings stay in memory only and drive the panel controller immediately through published values.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; `./script/build_and_run.sh`; `git diff --check`; process sampling showed DynamicIsland around `0.7-1.4%` CPU and `0.2%` memory after startup.
+- Rollback: Remove the runtime settings object, settings popover, and controller observation wiring if the menu bar settings surface should be dropped.
+
+### 2026-06-18 - clearer-calibration-boundary-rendering
+- Reason: User noticed the yellow 5pt calibration boundary looked inconsistent on the left/right sides compared with top/bottom because top safe-region guides visually covered the boundary and guide strokes were centered on their frames.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Calibration overlay now draws the yellow 5pt content boundary with a dedicated `strokeBorder`, offsets top safe-region guides downward by 2pt, lowers their opacity, and labels the guide as `5pt content boundary`.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --debug-calibration`; screenshot `/tmp/dynamic-island-calibration-boundary-fixed.png`; `./script/build_and_run.sh --verify`; `./script/build_and_run.sh`; repeated process checks showed DynamicIsland stabilizing at `0.0-0.1%` CPU and `0.2%` memory after startup.
+- Rollback: Restore the previous shared `calibrationRect` rendering only if the separated boundary guide is visually noisier than the original overlay.
+
+### 2026-06-18 - calibration-overlay-and-music-gesture-state-machine
+- Reason: User selected two release-readiness improvements: hidden notch/no-notch calibration and a stricter music gesture state machine so horizontal skip, vertical hide/show, rollback cancellation, and stationary music content do not interfere with each other.
+- Changed:
+  - `Sources/DynamicIslandCore/IslandCalibrationLayout.swift`
+  - `Sources/DynamicIslandCore/MusicSkipGestureStateMachine.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `script/build_and_run.sh`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `docs/superpowers/specs/2026-06-18-calibration-and-music-gesture-design.md`
+  - `docs/superpowers/plans/2026-06-18-calibration-and-music-gesture.md`
+  - `MEMORY.md`
+- Result: `--debug-calibration` launches an expanded hidden calibration overlay with shell outline, 5pt content boundary, physical camera forbidden region, and left/right safe regions. Normal launch records `calibrationOverlay=false`. Horizontal music skip is now driven by `MusicSkipGestureStateMachine`; direction locks per gesture, rollback enters a terminal cancelled state for that gesture, and commit still happens only at gesture finish/reset.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; `./script/build_and_run.sh --debug-calibration`; screenshot `/tmp/dynamic-island-calibration.png`; `./script/build_and_run.sh`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.0%` CPU and `0.2%` memory after startup.
+- Rollback: Remove `ISLAND_DEBUG_CALIBRATION` and restore the old controller-owned horizontal skip variables only if the debug overlay or core state machine causes regressions that cannot be fixed locally.
+
+### 2026-06-18 - keep-right-skip-music-content-stationary
+- Reason: User reported that when swiping right for the next-track gesture, the album artwork and waveform moved with the expanding shell. Root cause was `contentPinningCorrectionX`, which mixed shell edge-pinning correction into the base music content coordinates.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Right-swipe skip feedback now expands the shell edge while keeping the album artwork, track text, and waveform at their base positions. Left-swipe feedback still shifts the content origin only by the left-side expansion amount so the existing controls stay visually pinned while the left edge expands.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; `./script/build_and_run.sh`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at `1.3%` CPU and `0.2%` memory after startup.
+- Rollback: Restore `contentPinningCorrectionX` only if the design intentionally makes the base music content compensate for hover-scale edge pixels again.
+
+### 2026-06-18 - scaled-skip-edge-pinning
+- Reason: User reported that during a right-swipe music skip gesture, the left-side status/music accessory area moved slightly even though only the right edge should expand. Log review showed repeated `next` arm/cancel gestures, so the remaining issue was visual edge/content pinning rather than gesture direction.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Skip edge expansion now accounts for the current shell horizontal scale when computing `shellHorizontalOffset`, and the base music content receives a tiny content-layer correction while hover scale is active. This keeps the opposite edge and existing music controls pinned while only the gesture-side edge expands.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; debug music-signal screenshots at progress `0` and `next 1` showed identical left shell pixel coordinates across sampled top rows.
+- Rollback: Revert `shellHorizontalScale` only if hover scaling is removed from the skip feedback path.
+
+### 2026-06-18 - lock-horizontal-skip-feedback-direction
+- Reason: User reported that when swiping right to prepare a next-track skip, then swiping back to cancel, the UI briefly switched into the left/previous feedback animation.
+- Changed:
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Horizontal music skip now locks the feedback direction for the lifetime of the current horizontal gesture. Reverse movement reduces progress and can cancel the armed skip, but it cannot flip the in-shell icon to the opposite direction until a new gesture starts.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`.
+- Rollback: Remove `horizontalSkipGestureDirection` only if future gesture design explicitly allows one continuous horizontal gesture to switch from next to previous.
+
+### 2026-06-18 - mainline-naming-and-core-cleanup
+- Reason: User requested a full pass over code, docs, file formatting, and naming consistency after the music gesture and File Shelf work.
+- Changed:
+  - `AGENTS.md`
+  - `docs/HANDOFF-2026-06-15.md`
+  - `docs/logs/2026-06-17-expanded-shell-width-680.md`
+  - `docs/superpowers/plans/`
+  - `docs/superpowers/specs/2026-06-17-file-shelf-overlay-design.md`
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Sources/DynamicIslandCore/IslandTopStatusBandLayout.swift`
+  - `Sources/DynamicIsland/Support/MusicPlaybackDataSource.swift`
+  - `Sources/DynamicIsland/Views/ClosedMusicWaveformView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - Removed `Sources/DynamicIslandCore/AudioPlaybackState.swift`
+  - Removed `script/set_task_activity.sh`
+- Result: Current docs now use `DynamicIsland` / `DynamicIslandCore` / `DynamicIslandCoreChecks` naming and no longer point future work at removed Stats, usage, task-activity, or old audio-waveform paths. Core metrics now expose shared `contentBoundaryInset` and canvas window sizes instead of completion/status-dot-specific names. Removed unused StatusDot/AudioWaveform layout helpers, the unused core audio playback state file, and the old task-activity override script. Music waveform data now lives in the app-local `MusicWaveformSnapshot`.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; `./script/build_and_run.sh`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.5%` CPU and `0.2%` memory after startup.
+- Rollback: Restore the removed files and old metric API names only if a future branch reintroduces task activity, status dots, usage panels, or a core-owned audio playback model.
+
 ### 2026-06-18 - natural-horizontal-skip-direction-and-sf-symbol
 - Reason: User reported that horizontal music skip felt reversed relative to the trackpad interaction, and the custom next icon did not match Apple media-control styling.
 - Changed:

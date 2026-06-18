@@ -7,13 +7,11 @@ public struct IslandTopStatusBandLayout: Equatable, Sendable {
     public let leftStatusRegion: CGRect
     public let cameraHousingRegion: CGRect
     public let rightInfoRegion: CGRect
-    public let statusDotFrame: CGRect
-    public let audioWaveformFrame: CGRect
 
     public init(metrics: NotchMetrics) {
         shellWidth = metrics.openWidth
         bandHeight = metrics.closedHeight
-        guardInset = metrics.closedStatusDotGuardInset
+        guardInset = metrics.contentBoundaryInset
 
         let cameraMinX = (metrics.openWidth - metrics.cameraHousingWidth) / 2
         cameraHousingRegion = CGRect(
@@ -41,36 +39,6 @@ public struct IslandTopStatusBandLayout: Equatable, Sendable {
             height: max(0, metrics.closedHeight - (guardInset * 2))
         )
 
-        statusDotFrame = CGRect(
-            x: metrics.expandedStatusDotCenterX - (metrics.expandedStatusDotHaloDiameter / 2),
-            y: metrics.expandedStatusDotCenterY - (metrics.expandedStatusDotHaloDiameter / 2),
-            width: metrics.expandedStatusDotHaloDiameter,
-            height: metrics.expandedStatusDotHaloDiameter
-        )
-
-        let defaultCostBadgeWidth: CGFloat = 86
-        let waveformGapBeforeCost: CGFloat = 8
-        let waveformWidth = min(
-            metrics.expandedAudioWaveformSize.width,
-            max(1, rightInfoRegion.width - defaultCostBadgeWidth - waveformGapBeforeCost)
-        )
-        audioWaveformFrame = CGRect(
-            x: rightInfoRegion.maxX - defaultCostBadgeWidth - waveformGapBeforeCost - waveformWidth,
-            y: metrics.expandedAudioWaveformCenterY - (metrics.expandedAudioWaveformSize.height / 2),
-            width: waveformWidth,
-            height: metrics.expandedAudioWaveformSize.height
-        )
-    }
-
-    public func costBadgeFrame(width: CGFloat, height: CGFloat) -> CGRect {
-        let resolvedWidth = min(max(1, width.rounded()), max(1, rightInfoRegion.width))
-        let resolvedHeight = min(max(1, height.rounded()), max(1, rightInfoRegion.height))
-        return CGRect(
-            x: rightInfoRegion.maxX - resolvedWidth,
-            y: rightInfoRegion.midY - (resolvedHeight / 2),
-            width: resolvedWidth,
-            height: resolvedHeight
-        )
     }
 
     public func fileShelfButtonFrame(width: CGFloat, height: CGFloat) -> CGRect {
@@ -79,6 +47,17 @@ public struct IslandTopStatusBandLayout: Equatable, Sendable {
         return CGRect(
             x: leftStatusRegion.maxX - resolvedWidth,
             y: leftStatusRegion.midY - (resolvedHeight / 2),
+            width: resolvedWidth,
+            height: resolvedHeight
+        )
+    }
+
+    public func primaryNavigationFrame(width: CGFloat, height: CGFloat) -> CGRect {
+        let resolvedWidth = min(max(1, width.rounded()), max(1, rightInfoRegion.width))
+        let resolvedHeight = min(max(1, height.rounded()), max(1, rightInfoRegion.height))
+        return CGRect(
+            x: rightInfoRegion.maxX - resolvedWidth,
+            y: rightInfoRegion.midY - (resolvedHeight / 2),
             width: resolvedWidth,
             height: resolvedHeight
         )

@@ -2,7 +2,12 @@
 
 ## 项目概述
 
-为 **14 寸 MacBook Pro** 打造的 **Dynamic Island** 式桌面应用。纯黑药丸外壳与物理 camera housing 视觉融合，在顶部 32pt 空间提供任务状态、音频波形和本机使用量数据面板。
+为 **MacBook notch / 非 notch 显示器** 打造的 **Dynamic Island** 式桌面应用。纯黑药丸外壳与物理 camera housing 视觉融合，当前主线聚焦：
+
+- 默认/音乐播放态的顶部灵动岛外壳
+- 音乐播放信息、专辑图、条纹波形、左右滑切歌反馈
+- 展开态临时 File Shelf overlay
+- 显示器尺寸/刘海适配与交互日志
 
 - **不是** Vibe Island 功能复刻——`.reference/vibe-island/` 仅用于学习外壳、布局和动效
 - AI 会话监控、hook、socket、审批、终端跳转、SSH、更新等功能**不能自动纳入**，除非用户明确选择
@@ -28,8 +33,9 @@ swift build --product DynamicIsland
 pid=$(pgrep -x DynamicIsland | head -n 1)
 ps -o pid,stat,pcpu,pmem,etime,command -p "$pid"
 
-# 调试任务状态（短时覆盖，约 5 分钟后过期）
-./script/set_task_activity.sh idle|running|warning|error
+# 调试音乐状态 / 左右滑反馈（显式 debug 模式）
+./script/build_and_run.sh --debug-music-signal
+ISLAND_DEBUG_MUSIC_SIGNAL_FILE=/tmp/dynamic-island-music-signal.json ./script/send_music_signal.sh playing
 
 # 查看应用日志
 ./script/build_and_run.sh --telemetry
@@ -48,31 +54,30 @@ ps -o pid,stat,pcpu,pmem,etime,command -p "$pid"
 Package.swift
 Sources/
   DynamicIslandCore/            # 纯逻辑层，无 UI 依赖
-    NotchMetrics.swift         #   刘海尺寸真相源（收起 245×32，展开 700×230）
+    NotchMetrics.swift         #   刘海/外壳/安全边界尺寸真相源
+    DisplayProfile.swift       #   显示器类型和缩放配置
     IslandTopStatusBandLayout.swift  #   展开态顶部 32pt 区域合同
     IslandAnimationProfile.swift     #   统一动画参数
-    TaskActivityState.swift    #   6 种任务状态 + 呼吸动效 + Codex 事件解析
-    AudioPlaybackState.swift   #   波形状态（.idle / .audioLevels，无 ECG）
-    CodexUsage.swift           #   Token 解析 + 成本估算 + Summary
-    CalendarHeatmap.swift      #   热力图（Today/7d/30d/All）
-    UsageTrendTimeline.swift   #   趋势时间线（小时/天分桶）
-    DataPanelMode.swift        #   二级模式（Trends/Overview/All）
-    ...
+    TemporaryFileShelf.swift   #   临时文件架纯模型、分类、筛选、选择
   DynamicIsland/               # AppKit + SwiftUI UI 层
     Controllers/
-      IslandPanelController.swift  #   NSPanel + 展开/收起 + 轮询
+      IslandPanelController.swift  #   NSPanel + 展开/收起 + 手势 + 轮询
     Views/
-      IslandOverlayView.swift  #   主视图（黑底 ZStack + 展开内容）
-      StatusDotView.swift      #   状态点（Core Animation 柔光呼吸）
-      AudioWaveformView.swift  #   波形（Canvas + TimelineView）
-      DataPanelView.swift      #   数据面板（趋势图 + 热力图 + 摘要）
+      IslandOverlayView.swift        #   主视图（黑底 ZStack + 音乐态 + File Shelf overlay）
+      ClosedMusicAvatarView.swift    #   收起音乐态专辑图
+      ClosedMusicWaveformView.swift  #   收起音乐态条纹波形（Core Animation layer）
+      TemporaryFileShelfView.swift   #   展开态临时文件架 overlay
+      IslandTrackingHostingView.swift #  鼠标、滚动、拖放入口
     Support/
-      CodexUsageDataSource.swift     #   用量（优先 CC Switch → 回退 JSONL）
-      CCSwitchUsageDataSource.swift  #   CC Switch SQLite
-      TaskActivityDataSource.swift   #   任务状态（JSONL 事件检测）
-      AudioPlaybackDataSource.swift  #   音频源（AppleScript / SCK / Core Audio Tap）
+      MusicPlaybackDataSource.swift  #   Music/Spotify 播放状态和切歌命令
+      TemporaryFileShelfStore.swift  #   内存 File Shelf store
+      IslandInteractionLogger.swift  #   每次启动的 JSONL 交互日志
+      ScreenMetricsProvider.swift    #   显示器/刘海尺寸派生
+      DisplayProfileStore.swift      #   显示器配置缓存
+      DebugMusicSignal.swift         #   显式 debug 音乐信号
 Tests/DynamicIslandCoreChecks/main.swift  #   回归检查入口
 script/build_and_run.sh             #   构建 + 签名 + 打包 + 启动
+script/send_music_signal.sh         #   debug 音乐信号发送
 ```
 
 ---
@@ -81,30 +86,27 @@ script/build_and_run.sh             #   构建 + 签名 + 打包 + 启动
 
 ### 外壳与布局
 - MacBook Pro camera housing 是**物理不可显示区域**——文字、图标、按钮、交互热点必须避开
-- 收起态：camera housing `185×32`，左右槽各 `30pt`，外壳 `245×32`
-- 展开态：外壳 `700×230`，顶部 32pt 带分为 **左状态区 → camera 禁区 → 右信息区**（合同由 `IslandTopStatusBandLayout` 定义）
+- 收起态尺寸由 `NotchMetrics` 和当前显示器配置派生，不新增散落硬编码
+- 展开态顶部 32pt 带分为 **左安全区 → camera 禁区 → 右安全区**（合同由 `IslandTopStatusBandLayout` 定义）
 - 所有顶部元素通过 `IslandTopStatusBandLayout` 放置，不能随意移动
-- Stats header 层级固定：右上角 `Status / Stats / Tools`（默认 Stats），左侧 `Trends / Overview / All`，下方 `30s` + `Today / 7d / 30d / All`
 - 尺寸优先用 `NSScreen.safeAreaInsets` / `auxiliaryTopLeftArea` / `auxiliaryTopRightArea`，不要新增长期硬编码
+- UI、文字、图标、拖放边界默认遵守 5pt 约束；圆角和 camera housing 附近需要使用现有 metrics/layout 合同
 
-### 状态点
-- **只允许外层柔光呼吸**；中心点大小、位置、外壳尺寸不随呼吸变化
-- `idle` → 不呼吸；`thinking/running/compacting` → 绿色呼吸；`warning` → 黄色慢呼吸；`error` → 红色快脉冲
+### 音乐态与手势
+- 默认/无音乐不显示音乐附件，不跑持续动画
+- 音乐态专辑图是静态圆角图；条纹波形使用低开销 Core Animation layer
+- 左右滑切歌必须先进入 armed 状态，支持回滑取消；真实触控板 phase 手势等 `.ended` 后才提交
+- 隐藏态优先级最高，只允许下滑恢复，不允许 hover、点击、左右切歌
 
-### 音频波形
-- **默认/无音乐 = 静态横线**，不能有任何自动动画
-- 不恢复 ECG、heartbeat、scan head
-- 折叠态暂停波形动画：`visibleAudioPlayback = isExpanded ? state.audioPlayback : .idle`
-- 默认不启用 ScreenCaptureKit（避免菜单栏共享指示器）；`ISLAND_REAL_AUDIO_WAVEFORM=1` / `ISLAND_CORE_AUDIO_TAP_WAVEFORM=1` 是显式 opt-in
+### File Shelf
+- 只是临时文件架：保存文件 URL 引用，不复制、不持久化、不上传、不申请额外权限
+- 支持拖入、分类筛选、选择、多文件拖出；重启后为空
+- File Shelf 是独立 overlay，不作为一级 tab；Done 关闭 overlay，Clear 才清空文件
 
-### 使用量数据
-- 优先 `~/.cc-switch/cc-switch.db` → 回退 `~/.codex/sessions/**/*.jsonl`
-- 不把 Claude session 日志合并进 Codex 统计
-- `Today` = 本机时区当前自然日；`7d`/`30d` = 最近 N 个自然日；`All` = 最近约 6 个月
-
-### 任务状态检测
-- 默认 `CodexTaskActivityDataSource`（读 JSONL `payload.type`），不是进程名检测
-- `task-activity-state.txt` 只是 `script/set_task_activity.sh` 的短时覆盖（5 分钟过期）
+### 日志
+- 每次启动创建 `~/Library/Logs/DynamicIsland/session-*.jsonl`
+- 日志可以记录启动、显示器指标、展开/隐藏、手势、音乐、File Shelf 事件
+- 文件日志只能写脱敏信息：扩展名、类别、名称长度、路径指纹；不能写原始路径/文件名
 
 ---
 
@@ -138,7 +140,6 @@ script/build_and_run.sh             #   构建 + 签名 + 打包 + 启动
 - [ ] 修改动效、波形或轮询后，检查 DynamicIsland 进程 CPU 没有长期高占用
 - [ ] 未破坏顶部 32pt 布局合同
 - [ ] 未引入默认自动动画
-- [ ] 未合并 Claude 数据到 Codex 统计
 - [ ] 核心约束变更已记入 `MEMORY.md`
 
 ---
@@ -160,12 +161,11 @@ script/build_and_run.sh             #   构建 + 签名 + 打包 + 启动
 | 恢复 ECG/心跳波形 | 已明确移除 |
 | 折叠态跑持续动画 | CPU 飙高 + hover 卡顿 |
 | 默认启用屏幕采集 | 菜单栏共享指示器 |
-| Claude 日志合并到 Codex 统计 | 数据污染 |
-| 进程名检测任务状态 | 永远呼吸不停 |
 | 硬编码刘海尺寸 | 多屏/外接显示异常 |
 | 绝对时间当 beat index | 每帧亿次级运算 |
 | 照搬 Vibe Island 功能 | 偏离项目定位 |
-| 移动 Stats header 层级 | 布局已被多次调优 |
+| 把 File Shelf 做成文件管理器 | 偏离临时文件架范围 |
+| 隐藏态仍允许 hover/点击/切歌 | 用户无法预测交互状态 |
 
 ---
 

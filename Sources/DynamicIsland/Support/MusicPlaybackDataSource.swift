@@ -1,12 +1,21 @@
 import AppKit
 import Foundation
-import DynamicIslandCore
+
+struct MusicWaveformSnapshot: Equatable, Sendable {
+    let levels: [Double]
+
+    init(levels: [Double]) {
+        self.levels = levels.map { max(-1, min(1, $0)) }
+    }
+
+    static let idle = MusicWaveformSnapshot(levels: [])
+}
 
 struct MusicPlaybackSnapshot: Equatable, Sendable {
     let isPlaying: Bool
     let title: String
     let artist: String
-    let waveform: AudioPlaybackSnapshot
+    let waveform: MusicWaveformSnapshot
     let artworkData: Data?
 
     static let idle = MusicPlaybackSnapshot(isPlaying: false, title: "", artist: "", waveform: .idle, artworkData: nil)
@@ -27,7 +36,7 @@ struct MusicPlaybackSnapshot: Equatable, Sendable {
         )
     }
 
-    private static func syntheticWaveform() -> AudioPlaybackSnapshot {
+    private static func syntheticWaveform() -> MusicWaveformSnapshot {
         let levels = (0..<12).map { index -> Double in
             let progress = Double(index) / 11.0
             let envelope = 0.34 + (sin(progress * .pi) * 0.30)
@@ -35,7 +44,7 @@ struct MusicPlaybackSnapshot: Equatable, Sendable {
             let texture = sin((progress * .pi * 13.0) - 0.65) * 0.20
             return (carrier + texture) * envelope
         }
-        return AudioPlaybackSnapshot(levels: levels)
+        return MusicWaveformSnapshot(levels: levels)
     }
 }
 

@@ -1,9 +1,8 @@
 import AppKit
 import SwiftUI
-import DynamicIslandCore
 
 struct ClosedMusicWaveformView: NSViewRepresentable {
-    let snapshot: AudioPlaybackSnapshot
+    let snapshot: MusicWaveformSnapshot
 
     func makeNSView(context: Context) -> WaveformBarsView {
         WaveformBarsView()

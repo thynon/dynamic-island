@@ -14,11 +14,13 @@
 - `Sources/DynamicIslandCore/`
 - `Tests/DynamicIslandCoreChecks/`
 - `script/build_and_run.sh`
-- `script/set_task_activity.sh`
 - `docs/CODEX_GIT_WORKFLOW.md`
 - `docs/HANDOFF-2026-06-15.md`
 - `AGENTS.md`
 - `MEMORY.md`
+
+`script/set_task_activity.sh` existed during the rename, but was later removed
+with the old task-activity feature path.
 
 **Verification:**
 - `swift run DynamicIslandCoreChecks`

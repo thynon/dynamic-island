@@ -4,9 +4,9 @@
 
 **Goal:** Make Island File Shelf feel like a small system-level temporary file tray with grouped files, clear drop bounds, selection, and reliable drag-out removal.
 
-**Architecture:** Keep file classification and shelf state in `IslandCore`, keep drag/drop and external drag completion in AppKit-facing Island files, and keep shelf visuals inside focused SwiftUI views. Each phase should be independently testable and should not turn `Files` into a fourth first-level feature.
+**Architecture:** Keep file classification and shelf state in `DynamicIslandCore`, keep drag/drop and external drag completion in AppKit-facing Island files, and keep shelf visuals inside focused SwiftUI views. Each phase should be independently testable and should not turn `Files` into a fourth first-level feature.
 
-**Tech Stack:** Swift 6, SwiftPM, AppKit drag/drop APIs, SwiftUI, `IslandCoreChecks`, existing Island top-band layout contracts.
+**Tech Stack:** Swift 6, SwiftPM, AppKit drag/drop APIs, SwiftUI, `DynamicIslandCoreChecks`, existing Island top-band layout contracts.
 
 ---
 
@@ -15,7 +15,7 @@
 Already implemented:
 
 - File drag enters the Island target and opens File Shelf immediately.
-- Drag recognition reuses the existing completion-style bottom-edge bounce and Glass sound.
+- Drag recognition reuses the existing shell expansion feedback and Glass sound.
 - Shelf data is in-memory only.
 - App restart clears the shelf.
 - Items expire after `24h` during one app run.
@@ -40,9 +40,9 @@ Known next gaps:
 
 **Files:**
 
-- Create or modify: `Sources/IslandCore/TemporaryFileShelf.swift`
-- Modify: `Sources/Island/Views/TemporaryFileShelfView.swift`
-- Modify: `Tests/IslandCoreChecks/main.swift`
+- Create or modify: `Sources/DynamicIslandCore/TemporaryFileShelf.swift`
+- Modify: `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+- Modify: `Tests/DynamicIslandCoreChecks/main.swift`
 
 **Scope:**
 
@@ -64,13 +64,13 @@ Known next gaps:
 - Dropping a `.pptx` or `.key` file shows it under `Presentations`, not `Other`.
 - Empty categories are hidden.
 - A dashed boundary is visible around the shelf area even when files exist.
-- Top `Files` button position and right `Status / Stats / Tools` switcher do not move.
+- Top `Files` button position remains inside the safe-band layout and does not move existing top controls.
 
 **Verification:**
 
 ```bash
-swift run IslandCoreChecks
-swift build --product Island
+swift run DynamicIslandCoreChecks
+swift build --product DynamicIsland
 ./script/build_and_run.sh
 ```
 
@@ -89,10 +89,10 @@ Manual check:
 
 **Files:**
 
-- Create or modify: `Sources/IslandCore/TemporaryFileShelf.swift`
-- Modify: `Sources/Island/Views/TemporaryFileShelfView.swift`
-- Optional create: `Sources/Island/Views/TemporaryFileShelfSelectionOverlay.swift`
-- Modify: `Tests/IslandCoreChecks/main.swift`
+- Create or modify: `Sources/DynamicIslandCore/TemporaryFileShelf.swift`
+- Modify: `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+- Optional create: `Sources/DynamicIsland/Views/TemporaryFileShelfSelectionOverlay.swift`
+- Modify: `Tests/DynamicIslandCoreChecks/main.swift`
 
 **Scope:**
 
@@ -119,8 +119,8 @@ Manual check:
 **Verification:**
 
 ```bash
-swift run IslandCoreChecks
-swift build --product Island
+swift run DynamicIslandCoreChecks
+swift build --product DynamicIsland
 ./script/build_and_run.sh
 ```
 
@@ -140,11 +140,11 @@ Manual check:
 
 **Files:**
 
-- Create: `Sources/Island/Views/TemporaryFileShelfDragSourceView.swift`
-- Modify: `Sources/Island/Views/TemporaryFileShelfView.swift`
-- Modify: `Sources/Island/Controllers/IslandPanelController.swift`
-- Modify: `Sources/Island/Support/TemporaryFileShelfStore.swift`
-- Modify: `Tests/IslandCoreChecks/main.swift`
+- Create: `Sources/DynamicIsland/Views/TemporaryFileShelfDragSourceView.swift`
+- Modify: `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+- Modify: `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+- Modify: `Sources/DynamicIsland/Support/TemporaryFileShelfStore.swift`
+- Modify: `Tests/DynamicIslandCoreChecks/main.swift`
 
 **Scope:**
 
@@ -170,8 +170,8 @@ Manual check:
 **Verification:**
 
 ```bash
-swift run IslandCoreChecks
-swift build --product Island
+swift run DynamicIslandCoreChecks
+swift build --product DynamicIsland
 ./script/build_and_run.sh
 ```
 
@@ -192,11 +192,11 @@ Manual check:
 
 **Files:**
 
-- Create: `Sources/Island/Controllers/FileShelfCancelDropWindowController.swift`
-- Create: `Sources/Island/Views/FileShelfCancelDropView.swift`
-- Modify: `Sources/Island/Views/TemporaryFileShelfDragSourceView.swift`
-- Modify: `Sources/Island/Controllers/IslandPanelController.swift`
-- Modify: `Tests/IslandCoreChecks/main.swift`
+- Create: `Sources/DynamicIsland/Controllers/FileShelfCancelDropWindowController.swift`
+- Create: `Sources/DynamicIsland/Views/FileShelfCancelDropView.swift`
+- Modify: `Sources/DynamicIsland/Views/TemporaryFileShelfDragSourceView.swift`
+- Modify: `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+- Modify: `Tests/DynamicIslandCoreChecks/main.swift`
 
 **Scope:**
 
@@ -220,8 +220,8 @@ Manual check:
 **Verification:**
 
 ```bash
-swift run IslandCoreChecks
-swift build --product Island
+swift run DynamicIslandCoreChecks
+swift build --product DynamicIsland
 ./script/build_and_run.sh
 ```
 
@@ -241,10 +241,10 @@ Manual check:
 
 **Files:**
 
-- Modify: `Sources/IslandCore/TemporaryFileShelf.swift`
-- Modify: `Sources/Island/Support/TemporaryFileShelfStore.swift`
-- Modify: `Sources/Island/Views/TemporaryFileShelfView.swift`
-- Modify: `Tests/IslandCoreChecks/main.swift`
+- Modify: `Sources/DynamicIslandCore/TemporaryFileShelf.swift`
+- Modify: `Sources/DynamicIsland/Support/TemporaryFileShelfStore.swift`
+- Modify: `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+- Modify: `Tests/DynamicIslandCoreChecks/main.swift`
 
 **Scope:**
 
@@ -269,8 +269,8 @@ Manual check:
 **Verification:**
 
 ```bash
-swift run IslandCoreChecks
-swift build --product Island
+swift run DynamicIslandCoreChecks
+swift build --product DynamicIsland
 ./script/build_and_run.sh
 ```
 
@@ -288,10 +288,10 @@ Manual check:
 
 **Files:**
 
-- Modify: `Sources/Island/Views/TemporaryFileShelfView.swift`
-- Modify: `Sources/Island/Views/IslandOverlayView.swift`
-- Modify: `Sources/Island/Controllers/IslandPanelController.swift`
-- Modify: `Tests/IslandCoreChecks/main.swift`
+- Modify: `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+- Modify: `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+- Modify: `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+- Modify: `Tests/DynamicIslandCoreChecks/main.swift`
 
 **Scope:**
 
@@ -316,10 +316,10 @@ Manual check:
 **Verification:**
 
 ```bash
-swift run IslandCoreChecks
-swift build --product Island
+swift run DynamicIslandCoreChecks
+swift build --product DynamicIsland
 ./script/build_and_run.sh
-pid=$(pgrep -x Island | head -n 1)
+pid=$(pgrep -x DynamicIsland | head -n 1)
 ps -o pid,stat,pcpu,pmem,etime,command -p "$pid"
 ```
 
