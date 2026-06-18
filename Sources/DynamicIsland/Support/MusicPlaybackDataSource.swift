@@ -41,6 +41,26 @@ struct MusicPlaybackSnapshot: Equatable, Sendable {
 
 protocol MusicPlaybackDataSource: Sendable {
     func currentSnapshot() async -> MusicPlaybackSnapshot
+    func skipTrack(_ direction: MusicSkipDirection) async -> Bool
+}
+
+enum MusicSkipDirection: Equatable, Sendable {
+    case previous
+    case next
+
+    var appleScriptCommand: String {
+        switch self {
+        case .previous:
+            return """
+            try
+                set player position to 0
+            end try
+            previous track
+            """
+        case .next:
+            return "next track"
+        }
+    }
 }
 
 final class ScriptableMusicPlaybackDataSource: MusicPlaybackDataSource, @unchecked Sendable {
@@ -78,6 +98,25 @@ final class ScriptableMusicPlaybackDataSource: MusicPlaybackDataSource, @uncheck
             cachedDate = Date()
         }
         return nextSnapshot
+    }
+
+    func skipTrack(_ direction: MusicSkipDirection) async -> Bool {
+        let players = players
+        let didSkip = await Task.detached(priority: .userInitiated) {
+            for player in players where Self.isPlayerRunning(bundleIdentifier: player.bundleIdentifier) {
+                if Self.skipTrack(direction, for: player) {
+                    return true
+                }
+            }
+            return false
+        }.value
+
+        if didSkip {
+            withLockedState {
+                cachedDate = nil
+            }
+        }
+        return didSkip
     }
 
     private func withLockedState<T>(_ body: () -> T) -> T {
@@ -210,6 +249,26 @@ final class ScriptableMusicPlaybackDataSource: MusicPlaybackDataSource, @uncheck
         """
 
         return runAppleScript(script) == "playing"
+    }
+
+    private static func skipTrack(_ direction: MusicSkipDirection, for player: ScriptableMusicPlayer) -> Bool {
+        let escapedAppName = escapedAppleScriptString(player.appName)
+        let command = direction.appleScriptCommand
+        let script = """
+        if application "\(escapedAppName)" is running then
+            tell application "\(escapedAppName)"
+                try
+                    if player state is playing then
+                        \(command)
+                        return "skipped"
+                    end if
+                end try
+            end tell
+        end if
+        return "idle"
+        """
+
+        return runAppleScript(script) == "skipped"
     }
 
     private static func runAppleScript(_ source: String) -> String {

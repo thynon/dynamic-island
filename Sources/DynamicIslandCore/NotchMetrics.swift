@@ -83,8 +83,6 @@ public struct NotchMetrics: Equatable, Sendable {
     public static let musicStatusSlotWidth: CGFloat = 82.5
     public static let openWidth: CGFloat = 650
     public static let openHeight: CGFloat = 230
-    public static let overshootWidth: CGFloat = 732
-    public static let overshootHeight: CGFloat = 254
     public static let closedOuterCornerRadius: CGFloat = 30
     public static let defaultClosedConcaveTopRadius: CGFloat = 18
     public static let defaultOpenTopCornerRadius: CGFloat = 16
@@ -99,12 +97,6 @@ public struct NotchMetrics: Equatable, Sendable {
     public static let defaultExpandedAudioWaveformHeight: CGFloat = 22
     public static let defaultExpandedAudioWaveformLeadingInset: CGFloat = 80
     public static let defaultStatusDotDirectionalOvershootOffset: CGFloat = 0
-    public static let defaultExpandedContentTopSpacerHeight: CGFloat = 34
-    public static let defaultExpandedContentSectionSpacing: CGFloat = 6
-    public static let defaultExpandedHeaderHeight: CGFloat = 30
-    public static let defaultExpandedDemoSlotHeight: CGFloat = 122
-    public static let defaultExpandedStatusChipHeight: CGFloat = 24
-    public static let defaultExpandedStatusChipCornerRadius: CGFloat = 8
     public static let compactNotchedReferenceWidth: CGFloat = 1512
     public static let compactNotchedReferenceHeight: CGFloat = 982
     private static let openWidthReductionPerSide: CGFloat = 25
@@ -114,8 +106,6 @@ public struct NotchMetrics: Equatable, Sendable {
     public let statusSlotWidth: CGFloat
     public let openWidth: CGFloat
     public let openHeight: CGFloat
-    public let overshootWidth: CGFloat
-    public let overshootHeight: CGFloat
     public let closedTopCornerRadius: CGFloat
     public let openTopCornerRadius: CGFloat
     public let closedBottomCornerRadius: CGFloat
@@ -263,30 +253,6 @@ public struct NotchMetrics: Equatable, Sendable {
         closedAudioWaveformCenterY
     }
 
-    public var expandedContentTopSpacerHeight: CGFloat {
-        Self.defaultExpandedContentTopSpacerHeight
-    }
-
-    public var expandedContentSectionSpacing: CGFloat {
-        Self.defaultExpandedContentSectionSpacing
-    }
-
-    public var expandedHeaderHeight: CGFloat {
-        Self.defaultExpandedHeaderHeight
-    }
-
-    public var expandedDemoSlotHeight: CGFloat {
-        Self.defaultExpandedDemoSlotHeight
-    }
-
-    public var expandedStatusChipHeight: CGFloat {
-        Self.defaultExpandedStatusChipHeight
-    }
-
-    public var expandedStatusChipCornerRadius: CGFloat {
-        Self.defaultExpandedStatusChipCornerRadius
-    }
-
     public var expandedContentGuardInset: CGFloat {
         Self.defaultContentBoundaryInset
     }
@@ -307,10 +273,6 @@ public struct NotchMetrics: Equatable, Sendable {
         Self.defaultContentBoundaryInset
     }
 
-    public var closedWindowSize: CGSize {
-        CGSize(width: closedShellWidth, height: closedHeight)
-    }
-
     public var closedCompletionBounceDrop: CGFloat {
         Self.defaultClosedCompletionBounceDrop
     }
@@ -321,10 +283,6 @@ public struct NotchMetrics: Equatable, Sendable {
 
     public var openCompletionFeedbackWindowSize: CGSize {
         CGSize(width: openWidth, height: openHeight + Self.defaultClosedCompletionBounceSlack)
-    }
-
-    public var openWindowSize: CGSize {
-        CGSize(width: openWidth, height: openHeight)
     }
 
     public static let preview14Inch = NotchMetrics(
@@ -338,8 +296,6 @@ public struct NotchMetrics: Equatable, Sendable {
         statusSlotWidth: CGFloat = Self.statusSlotWidth,
         openWidth: CGFloat = Self.openWidth,
         openHeight: CGFloat = Self.openHeight,
-        overshootWidth: CGFloat = Self.overshootWidth,
-        overshootHeight: CGFloat = Self.overshootHeight,
         closedTopCornerRadius: CGFloat = Self.closedOuterCornerRadius,
         openTopCornerRadius: CGFloat = Self.defaultOpenTopCornerRadius,
         closedBottomCornerRadius: CGFloat = Self.closedInnerCornerRadius,
@@ -357,8 +313,6 @@ public struct NotchMetrics: Equatable, Sendable {
         self.statusSlotWidth = resolvedStatusSlotWidth
         self.openWidth = resolvedOpenWidth
         self.openHeight = resolvedOpenHeight
-        self.overshootWidth = max(resolvedOpenWidth, overshootWidth.rounded())
-        self.overshootHeight = max(resolvedOpenHeight, overshootHeight.rounded())
         self.closedTopCornerRadius = max(0, closedTopCornerRadius)
         self.openTopCornerRadius = max(0, openTopCornerRadius)
         self.closedBottomCornerRadius = max(0, closedBottomCornerRadius)

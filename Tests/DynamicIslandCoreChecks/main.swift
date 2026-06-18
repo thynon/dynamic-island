@@ -121,6 +121,306 @@ private func testDisplayProfileDerivesMetricsFromScreenSignature() {
     expectEqual(profile.metrics.openWidth, 650, "display profile derives open shell width")
     expectEqual(profile.metrics.openHeight, 230, "display profile derives open shell height")
     expectEqual(profile.matches(signature), true, "display profile matches the same signature")
+
+    let moreSpaceSignature = DisplaySignature(
+        frameWidth: 1800,
+        frameHeight: 1169,
+        safeAreaTopInset: 32,
+        auxiliaryTopLeftWidth: 807,
+        auxiliaryTopRightWidth: 808,
+        backingScaleFactor: 2
+    )
+    let moreSpaceProfile = DisplayProfile(signature: moreSpaceSignature, measuredAt: Date(timeIntervalSince1970: 0))
+    expectEqual(moreSpaceProfile.displayKind, .notchedLarge, "Apple more-space scaling uses the larger notched profile")
+    expectEqual(moreSpaceProfile.metrics.openWidth > profile.metrics.openWidth, true, "more-space scaling gives the island more horizontal room")
+    expectEqual(moreSpaceProfile.metrics.openHeight > profile.metrics.openHeight, true, "more-space scaling gives the island more vertical room")
+    expectEqual(moreSpaceProfile.matches(moreSpaceSignature), true, "more-space profile is cached by its exact display signature")
+}
+
+private func testReleaseDisplayAdaptationMatrixAndLeanContracts() {
+    let compactAirSignature = DisplaySignature(
+        frameWidth: 1470,
+        frameHeight: 956,
+        safeAreaTopInset: 32,
+        auxiliaryTopLeftWidth: 642,
+        auxiliaryTopRightWidth: 643,
+        backingScaleFactor: 2
+    )
+    let compactAirProfile = DisplayProfile(signature: compactAirSignature, measuredAt: Date(timeIntervalSince1970: 0))
+    expectEqual(compactAirProfile.displayKind, .notchedCompact, "13/15-inch Air style notch uses compact profile")
+    expectEqual(compactAirProfile.metrics.cameraHousingWidth, 185, "compact notched displays preserve camera housing width")
+    expectEqual(compactAirProfile.metrics.openWidth, 650, "compact notched displays keep the baseline expanded width")
+    expectEqual(compactAirProfile.metrics.openHeight, 230, "compact notched displays keep the baseline expanded height")
+
+    let sixteenInchSignature = DisplaySignature(
+        frameWidth: 1728,
+        frameHeight: 1117,
+        safeAreaTopInset: 32,
+        auxiliaryTopLeftWidth: 771,
+        auxiliaryTopRightWidth: 772,
+        backingScaleFactor: 2
+    )
+    let sixteenInchProfile = DisplayProfile(signature: sixteenInchSignature, measuredAt: Date(timeIntervalSince1970: 0))
+    expectEqual(sixteenInchProfile.displayKind, .notchedLarge, "16-inch notch uses the larger notched profile")
+    expectEqual(sixteenInchProfile.metrics.cameraHousingWidth, 185, "16-inch notch preserves the camera housing width")
+    expectEqual(sixteenInchProfile.metrics.openWidth, 728, "16-inch notch gets a wider expanded island")
+    expectEqual(sixteenInchProfile.metrics.openHeight, 235, "16-inch notch gets a taller expanded island")
+
+    let standardDisplaySignature = DisplaySignature(
+        frameWidth: 1440,
+        frameHeight: 900,
+        safeAreaTopInset: 0,
+        auxiliaryTopLeftWidth: nil,
+        auxiliaryTopRightWidth: nil,
+        backingScaleFactor: 2
+    )
+    let standardDisplayProfile = DisplayProfile(signature: standardDisplaySignature, measuredAt: Date(timeIntervalSince1970: 0))
+    expectEqual(standardDisplayProfile.displayKind, .standardDisplay, "non-notch displays use the standard display profile")
+    expectEqual(standardDisplayProfile.metrics.closedHeight, 32, "non-notch displays keep a stable closed height")
+    expectEqual(standardDisplayProfile.metrics.openWidth, 560, "standard displays use a compact expanded width")
+    expectEqual(standardDisplayProfile.metrics.openHeight, 210, "standard displays use a compact expanded height")
+
+    let notchMetrics = source("Sources/DynamicIslandCore/NotchMetrics.swift")
+    let screenMetricsProvider = source("Sources/DynamicIsland/Support/ScreenMetricsProvider.swift")
+    let displayProfileStore = source("Sources/DynamicIsland/Support/DisplayProfileStore.swift")
+    expectEqual(notchMetrics.contains("overshootWidth"), false, "release metrics do not keep unused overshoot width state")
+    expectEqual(notchMetrics.contains("overshootHeight"), false, "release metrics do not keep unused overshoot height state")
+    expectEqual(notchMetrics.contains("expandedContentTopSpacerHeight"), false, "release metrics remove unused expanded content spacer state")
+    expectEqual(notchMetrics.contains("defaultExpandedContentTopSpacerHeight"), false, "release metrics remove unused expanded content constants")
+    expectEqual(notchMetrics.contains("closedWindowSize"), false, "release metrics remove unused closed window size helper")
+    expectEqual(notchMetrics.contains("openWindowSize"), false, "release metrics remove unused open window size helper")
+    expectEqual(screenMetricsProvider.contains("shouldShowCalibrationCaption"), false, "screen metrics provider does not keep unused calibration caption state")
+    expectEqual(displayProfileStore.contains("currentProfile()"), false, "display profile store does not keep unused profile reader API")
+}
+
+private func testTemporaryFileShelfCoreModel() {
+    let core = source("Sources/DynamicIslandCore/TemporaryFileShelf.swift")
+
+    expectEqual(core.contains("import AppKit"), false, "temporary file shelf core has no AppKit dependency")
+    expectEqual(core.contains("import SwiftUI"), false, "temporary file shelf core has no SwiftUI dependency")
+
+    let now = Date(timeIntervalSince1970: 1_000)
+    let old = Date(timeIntervalSince1970: 0)
+    let expiredItem = TemporaryShelfItem(
+        fileURL: URL(fileURLWithPath: "/tmp/expired.pdf"),
+        addedAt: old,
+        expiresAt: old.addingTimeInterval(1)
+    )
+    var shelf = TemporaryFileShelf(items: [expiredItem], now: now)
+
+    expectEqual(shelf.items.isEmpty, true, "temporary file shelf prunes expired files at init")
+
+    shelf.addFileURLs([
+        URL(fileURLWithPath: "/tmp/photo.PNG"),
+        URL(fileURLWithPath: "/tmp/notes.md"),
+        URL(fileURLWithPath: "/tmp/budget.xlsx"),
+        URL(fileURLWithPath: "/tmp/deck.key"),
+        URL(fileURLWithPath: "/tmp/archive.zip")
+    ], now: now)
+
+    expectEqual(shelf.items.count, 5, "temporary file shelf stores dropped files in memory")
+    expectEqual(shelf.items.map(\.category), [.images, .documents, .spreadsheets, .presentations, .other], "temporary file shelf classifies common file extensions")
+    expectEqual(TemporaryShelfFileCategory.from(fileExtension: "png"), .images, "png is classified as Images")
+    expectEqual(TemporaryShelfFileCategory.from(fileExtension: "pdf"), .documents, "pdf is classified as Documents")
+    expectEqual(TemporaryShelfFileCategory.from(fileExtension: "md"), .documents, "md is classified as Documents")
+    expectEqual(TemporaryShelfFileCategory.from(fileExtension: "xlsx"), .spreadsheets, "xlsx is classified as Spreadsheets")
+    expectEqual(TemporaryShelfFileCategory.from(fileExtension: "csv"), .spreadsheets, "csv is classified as Spreadsheets")
+    expectEqual(TemporaryShelfFileCategory.from(fileExtension: "pptx"), .presentations, "pptx is classified as Presentations")
+    expectEqual(TemporaryShelfFileCategory.from(fileExtension: "key"), .presentations, "key is classified as Presentations")
+    expectEqual(TemporaryShelfFileCategory.from(fileExtension: "unknown"), .other, "unknown extensions are classified as Other")
+
+    shelf.addFileURLs([URL(fileURLWithPath: "/tmp/photo.PNG")], now: now.addingTimeInterval(10))
+    expectEqual(shelf.items.count, 5, "temporary file shelf replaces duplicate file URLs instead of duplicating")
+    expectEqual(shelf.items(filteredBy: .all).count, 5, "all filter returns every temporary file")
+    expectEqual(shelf.items(filteredBy: .images).map(\.displayName), ["photo.PNG"], "image filter returns image files only")
+    expectEqual(shelf.items(filteredBy: .documents).map(\.displayName), ["notes.md"], "documents filter returns document files only")
+    expectEqual(shelf.items(filteredBy: .spreadsheets).map(\.displayName), ["budget.xlsx"], "spreadsheets filter returns spreadsheet files only")
+    expectEqual(shelf.items(filteredBy: .presentations).map(\.displayName), ["deck.key"], "presentations filter returns presentation files only")
+    expectEqual(shelf.items(filteredBy: .other).map(\.displayName), ["archive.zip"], "other filter returns unmatched files only")
+    expectEqual(shelf.groups(filteredBy: .all).map(\.category), [.images, .documents, .spreadsheets, .presentations, .other], "temporary file shelf groups are rendered in stable category order")
+
+    var selection = TemporaryFileShelfSelection()
+    selection.selectOnly("/tmp/photo.PNG")
+    selection.select(["/tmp/photo.PNG", "/tmp/missing.txt"])
+    selection.retainOnly(itemIDs: shelf.items.map(\.id))
+    expectEqual(selection.selectedItemIDs, ["/tmp/photo.PNG"], "temporary file shelf selection drops stale IDs")
+    selection.toggle("/tmp/notes.md")
+    expectEqual(selection.selectedItemIDs, ["/tmp/photo.PNG", "/tmp/notes.md"], "temporary file shelf selection can add an item")
+    selection.toggle("/tmp/photo.PNG")
+    expectEqual(selection.selectedItemIDs, ["/tmp/notes.md"], "temporary file shelf selection can remove a toggled item")
+
+    shelf.removeItems(ids: ["/tmp/photo.PNG", "/tmp/notes.md"])
+    selection.retainOnly(itemIDs: shelf.items.map(\.id))
+    expectEqual(shelf.items.map(\.displayName), ["budget.xlsx", "deck.key", "archive.zip"], "temporary file shelf can remove several files at once")
+    expectEqual(selection.selectedItemIDs, [], "temporary file shelf selection drops IDs removed by batch deletion")
+}
+
+private func testTemporaryFileShelfExpandedDropIntegration() {
+    let overlay = source("Sources/DynamicIsland/Views/IslandOverlayView.swift")
+    let controller = source("Sources/DynamicIsland/Controllers/IslandPanelController.swift")
+    let trackingView = source("Sources/DynamicIsland/Views/IslandTrackingHostingView.swift")
+    let shelfView = source("Sources/DynamicIsland/Views/TemporaryFileShelfView.swift")
+    let shelfStore = source("Sources/DynamicIsland/Support/TemporaryFileShelfStore.swift")
+
+    expectEqual(shelfStore.contains("@MainActor"), true, "temporary file shelf store stays on the main actor for UI state")
+    expectEqual(shelfStore.contains("final class TemporaryFileShelfStore"), true, "temporary file shelf uses a dedicated in-memory app store")
+    expectEqual(shelfStore.contains("@Published private(set) var shelf"), true, "temporary file shelf store publishes shelf state")
+    expectEqual(shelfStore.contains("addFileURLs"), true, "temporary file shelf store accepts dropped file URLs")
+    expectEqual(shelfStore.contains("removeItem"), true, "temporary file shelf store removes one item")
+    expectEqual(shelfStore.contains("removeItems"), true, "temporary file shelf store removes several items")
+    expectEqual(shelfStore.contains("clear()"), true, "temporary file shelf store clears all files")
+    expectEqual(shelfStore.contains("pruneExpired"), true, "temporary file shelf store exposes an expiry cleanup entry point")
+    expectEqual(shelfStore.contains("JSONEncoder"), false, "temporary file shelf store does not persist files")
+    expectEqual(shelfStore.contains("write(to:"), false, "temporary file shelf store does not write persisted state")
+    expectEqual(shelfStore.contains("Application Support"), false, "temporary file shelf store does not copy files into app support")
+    expectEqual(shelfStore.contains("FileManager.default.copyItem"), false, "temporary file shelf store does not copy real files")
+
+    expectEqual(trackingView.contains("var canAcceptFileDrop"), true, "tracking view asks the controller whether the current drop is valid")
+    expectEqual(trackingView.contains("var onFileDrop"), true, "tracking view reports file URL drops")
+    expectEqual(trackingView.contains("var onFileDropTargetedChange"), true, "tracking view reports visual drop targeting")
+    expectEqual(trackingView.contains("registerForDraggedTypes([.fileURL])"), true, "tracking view registers for Finder file URL drags")
+    expectEqual(trackingView.contains("override func draggingEntered"), true, "tracking view handles file drag entry")
+    expectEqual(trackingView.contains("override func performDragOperation"), true, "tracking view performs file drop operations")
+    expectEqual(trackingView.contains("draggingPasteboard.fileURLs"), true, "tracking view reads file URLs from the dragging pasteboard")
+
+    expectEqual(controller.contains("TemporaryFileShelfStore"), true, "controller owns the temporary file shelf store")
+    expectEqual(controller.contains("hostingView.canAcceptFileDrop"), true, "controller gates drag acceptance")
+    expectEqual(controller.contains("hostingView.onFileDrop"), true, "controller receives dropped file URLs")
+    expectEqual(controller.contains("handleFileDrop"), true, "controller routes dropped files through one handler")
+    expectEqual(controller.contains("guard !overlayState.isShellHidden else { return false }"), true, "controller accepts file drags in visible closed or expanded shell states")
+    expectEqual(controller.contains("isExpanded && !overlayState.isShellHidden"), false, "controller no longer restricts file drops to the expanded shell")
+    expectEqual(controller.contains("pointerInsideInteractiveShell()"), true, "controller uses the precise island hit test for drop gating")
+    expectEqual(controller.contains("screenPointFromDraggingLocation"), true, "controller converts AppKit dragging locations from window coordinates")
+    expectEqual(controller.contains("panel.convertPoint(toScreen: dropPoint)"), true, "controller avoids double-converting dragging locations through the hosting view")
+    expectEqual(controller.contains("setExpanded(true)"), true, "controller expands after receiving a file drop from the closed state")
+    expectEqual(controller.contains("overlayState.isFileShelfOverlayVisible = true"), true, "controller opens the file shelf overlay after a valid file drop")
+    expectEqual(controller.contains("overlayState.isFileShelfPinnedOpen = true"), true, "controller can pin the file shelf overlay open after drop or Files button tap")
+    expectEqual(controller.contains("startTemporaryFileShelfPruning"), true, "controller prunes expired temporary files on a low-frequency timer")
+    expectEqual(controller.contains("60_000_000_000"), true, "temporary file shelf pruning runs every 60 seconds instead of high-frequency polling")
+    expectEqual(controller.contains("ISLAND_DEBUG_FILE_SHELF_URLS"), true, "debug visual QA can preload temporary file references without cursor control")
+    expectEqual(controller.contains("loadDebugTemporaryFileShelfIfNeeded"), true, "debug file shelf preload is isolated behind an explicit environment check")
+    expectEqual(controller.contains("overlayState.temporaryFileShelf"), true, "controller syncs temporary file shelf state into the overlay")
+    expectEqual(controller.contains("temporaryFileShelfSelection"), true, "controller owns temporary file shelf selection state")
+    expectEqual(controller.contains("openTemporaryFileShelfOverlay"), true, "controller has a dedicated Files button overlay opener")
+    expectEqual(controller.contains("closeTemporaryFileShelfOverlay"), true, "controller has a Done action that closes without clearing files")
+    expectEqual(controller.contains("setTemporaryFileShelfFilter"), true, "controller updates file shelf filtering without mutating shelf data")
+    expectEqual(controller.contains("selectTemporaryFile"), true, "controller handles temporary file selection")
+    expectEqual(controller.contains("completeTemporaryFileDrag"), true, "controller handles external temporary file drag completion")
+    expectEqual(controller.contains("removeTemporaryFiles(ids:"), true, "controller can remove multiple temporary files after successful drag")
+    expectEqual(controller.contains("retainOnly(itemIDs:"), true, "controller keeps selection in sync with remaining shelf items")
+
+    expectEqual(overlay.contains("@Published var temporaryFileShelf"), true, "overlay state publishes temporary file shelf contents")
+    expectEqual(overlay.contains("@Published var temporaryFileShelfSelectedItemIDs"), true, "overlay state publishes selected temporary files")
+    expectEqual(overlay.contains("@Published var isFileShelfOverlayVisible"), true, "overlay state publishes whether the independent file shelf overlay is visible")
+    expectEqual(overlay.contains("@Published var isFileShelfPinnedOpen"), true, "overlay state publishes whether the file shelf overlay is pinned")
+    expectEqual(overlay.contains("@Published var isFileDropTargetActive"), true, "overlay state publishes active file drop targeting")
+    expectEqual(overlay.contains("@Published var temporaryFileShelfFilter"), true, "overlay state publishes file shelf filter state")
+    expectEqual(overlay.contains("state.isFileDropTargetActive && !isExpanded"), true, "closed shell uses drop targeting for hover-like file drag feedback")
+    expectEqual(overlay.contains("FileShelfOverlayView"), true, "expanded overlay renders the file shelf as an independent overlay")
+    expectEqual(overlay.contains("state.isFileShelfOverlayVisible"), true, "file shelf is not always mounted in expanded content")
+    expectEqual(overlay.contains("FileShelfButton"), true, "overlay has a top safe-zone Files button when the shelf is non-empty")
+    expectEqual(overlay.contains("fileShelfButtonFrame"), true, "Files button uses the top status band layout instead of hand-written coordinates")
+    expectEqual(overlay.contains("private var expandedTemporaryShelfWidth: CGFloat {\n        metrics.openWidth\n    }"), true, "expanded temporary shelf receives the full shell width so its own 5pt boundary is explicit")
+    expectEqual(overlay.contains("contentBoundaryInset: metrics.expandedContentGuardInset"), true, "expanded temporary shelf receives the canonical 5pt boundary from NotchMetrics")
+    expectEqual(overlay.contains("topBoundaryInset: metrics.expandedHorizontalContentPadding"), true, "expanded temporary shelf header receives the corner-aware top boundary from NotchMetrics")
+    expectEqual(overlay.contains(".position(x: metrics.openWidth / 2, y: expandedTemporaryShelfCenterY)"), true, "expanded temporary shelf stays centered inside the shell before applying its internal 5pt boundary")
+    expectEqual(overlay.contains("onRemoveTemporaryFile"), true, "expanded overlay can remove one temporary file")
+    expectEqual(overlay.contains("onClearTemporaryFiles"), true, "expanded overlay can clear temporary files")
+    expectEqual(overlay.contains("onSelectTemporaryFile"), true, "expanded overlay can select temporary files")
+    expectEqual(overlay.contains("onCompleteTemporaryFileDrag"), true, "expanded overlay can complete an external file drag")
+
+    expectEqual(shelfView.contains("struct FileShelfOverlayView"), true, "temporary file shelf view is implemented as an independent overlay view")
+    expectEqual(shelfView.contains("TemporaryFileShelf"), true, "temporary file shelf view receives the core shelf model")
+    expectEqual(shelfView.contains("TemporaryFileShelfFilter"), true, "temporary file shelf view receives filter state")
+    expectEqual(shelfView.contains("selectedItemIDs"), true, "temporary file shelf view receives selection state")
+    expectEqual(shelfView.contains("isDropTargetActive"), true, "temporary file shelf view shows drag target state")
+    expectEqual(shelfView.contains("onFilterChange"), true, "temporary file shelf view exposes filter changes")
+    expectEqual(shelfView.contains("onDone"), true, "temporary file shelf view exposes a Done action")
+    expectEqual(shelfView.contains("onClearSelection"), true, "temporary file shelf view can clear selection from blank space")
+    expectEqual(shelfView.contains("onSelectItem"), true, "temporary file shelf view exposes item selection")
+    expectEqual(shelfView.contains("onRemoveItem"), true, "temporary file shelf view exposes single-item removal")
+    expectEqual(shelfView.contains("onClear"), true, "temporary file shelf view exposes clear-all")
+    expectEqual(shelfView.contains("onDragCompleted"), true, "temporary file shelf view reports completed drag sessions")
+    expectEqual(shelfView.contains("TemporaryFileDragSourceView"), true, "temporary file shelf view uses an AppKit drag source bridge")
+    expectEqual(shelfView.contains("NSDraggingSource"), true, "temporary file shelf drag bridge receives external drag completion operations")
+    expectEqual(shelfView.contains("NSDraggingItem"), true, "temporary file shelf drag bridge creates real file drag items")
+    expectEqual(shelfView.contains("pasteboardWriter: shelfItem.fileURL as NSURL"), true, "temporary file shelf exports real file URL pasteboard writers")
+    expectEqual(shelfView.contains("endedAt screenPoint: NSPoint, operation: NSDragOperation"), true, "temporary file shelf drag bridge detects successful external drops")
+    expectEqual(shelfView.contains("operation != []"), true, "temporary file shelf keeps files when drag is cancelled")
+    expectEqual(shelfView.contains("ScrollView"), true, "temporary file shelf view can fit several files without growing beyond the shell")
+    expectEqual(shelfView.contains("TemporaryFileShelfFilter.allCases"), true, "temporary file shelf renders a stable filter bar")
+    expectEqual(shelfView.contains("private var visibleItems: [TemporaryShelfItem]"), true, "temporary file shelf uses a compact visible item list for the limited island height")
+    expectEqual(shelfView.contains("shelf.items(filteredBy: filter)"), true, "temporary file shelf filters through the core filtering API")
+    expectEqual(shelfView.contains("Text(item.category.title)"), true, "temporary file shelf keeps category information inside compact file tiles")
+    expectEqual(shelfView.contains("Done"), true, "temporary file shelf Done closes the overlay without clearing files")
+    expectEqual(shelfView.contains("Clear"), true, "temporary file shelf Clear is the destructive action")
+    expectEqual(shelfView.contains("let contentBoundaryInset: CGFloat"), true, "temporary file shelf receives an explicit boundary inset instead of inventing one")
+    expectEqual(shelfView.contains("let topBoundaryInset: CGFloat"), true, "temporary file shelf receives a corner-aware top boundary inset")
+    expectEqual(shelfView.contains("private var shellContentInset: CGFloat"), true, "temporary file shelf resolves one safe inset for rounded shell content")
+    expectEqual(shelfView.contains("max(contentBoundaryInset, topBoundaryInset)"), true, "temporary file shelf never uses less than the 5pt guard or rounded-corner guard")
+    expectEqual(shelfView.contains("header\n                .padding(.horizontal, shellContentInset)"), true, "temporary file shelf header avoids the expanded shell's rounded top corners")
+    expectEqual(shelfView.contains("filterBar\n                    .padding(.horizontal, shellContentInset)"), true, "temporary file shelf filters avoid left-edge clipping")
+    expectEqual(shelfView.contains("groupedShelfBody\n                    .padding(.horizontal, shellContentInset)"), true, "temporary file shelf populated area avoids clipping while respecting the 5pt guard")
+    expectEqual(shelfView.contains("emptyDropBody\n                    .frame(height: emptyShelfBodyHeight)\n                    .padding(.horizontal, shellContentInset)"), true, "temporary file shelf empty drop area avoids clipping while respecting the 5pt guard")
+    expectEqual(shelfView.contains(".strokeBorder("), true, "temporary file shelf boundary strokes are drawn inside the 5pt guard")
+    expectEqual(shelfView.contains(".stroke(\n                    .white.opacity(isDropTargetActive"), false, "temporary file shelf drop boundary does not draw half a stroke outside the 5pt guard")
+    expectEqual(shelfView.contains("horizontalInset"), false, "temporary file shelf does not add an arbitrary second horizontal boundary")
+    expectEqual(shelfView.contains("CGFloat = 24"), false, "temporary file shelf does not hard-code the rejected 24pt visual boundary patch")
+    expectEqual(shelfView.contains("private let emptyShelfBodyHeight: CGFloat = 86"), true, "temporary file shelf empty state does not stretch into an oversized dashed panel")
+    expectEqual(shelfView.contains("private let filterBarHeight: CGFloat = 20"), true, "temporary file shelf filter bar is compact enough for the island height")
+    expectEqual(shelfView.contains(".frame(width: 16, height: 16)"), true, "temporary file shelf header icon has stable bounds and cannot be clipped by symbol bearings")
+    expectEqual(shelfView.contains("Spacer(minLength: 0)"), true, "temporary file shelf leaves unused empty-state space unframed")
+    expectEqual(shelfView.contains("GridItem(.adaptive(minimum: 112, maximum: 150), spacing: 6)"), true, "temporary file shelf uses denser adaptive columns to show more files")
+    expectEqual(shelfView.contains(".frame(height: 38)"), true, "temporary file shelf tiles are compact enough to show more rows")
+    expectEqual(shelfView.contains(".frame(width: 18, height: 18)"), true, "temporary file shelf icons are compact but still recognizable")
+    expectEqual(shelfView.contains("LazyVStack(alignment: .leading, spacing: 10)"), false, "temporary file shelf no longer wastes height on stacked group sections")
+    expectEqual(shelfView.contains(".frame(height: 52)"), false, "temporary file shelf no longer uses the old tall file tiles")
+    expectEqual(shelfView.contains(".font(.system(size: 30, weight: .medium))"), true, "temporary file shelf empty state is visually balanced without explanatory text")
+    expectEqual(shelfView.contains("NSWorkspace.shared.icon"), true, "temporary file shelf view uses native file icons")
+}
+
+private func testInteractionLoggingContract() {
+    let logger = source("Sources/DynamicIsland/Support/IslandInteractionLogger.swift")
+    let controller = source("Sources/DynamicIsland/Controllers/IslandPanelController.swift")
+
+    expectEqual(logger.contains("final class IslandInteractionLogger"), true, "interaction logging uses a dedicated logger")
+    expectEqual(logger.contains("Library/Logs/DynamicIsland"), true, "interaction logs are written to the app log directory")
+    expectEqual(logger.contains("sessionID"), true, "interaction logs include a per-launch session identifier")
+    expectEqual(logger.contains("encoderDateFormatter.timeZone = .current"), true, "interaction log timestamps use the local machine time zone")
+    expectEqual(logger.contains(".withFractionalSeconds"), true, "interaction log timestamps include subsecond precision")
+    expectEqual(logger.contains("JSONSerialization.data"), true, "interaction logs are JSONL records")
+    expectEqual(logger.contains("FileHandle(forWritingTo:"), true, "interaction logger appends records efficiently")
+    expectEqual(logger.contains("static func sanitizedFileMetadata"), true, "interaction logger exposes sanitized file metadata")
+    expectEqual(logger.contains("pathFingerprint"), true, "interaction logger keeps a stable path fingerprint without writing full paths")
+    expectEqual(logger.contains("fileURL.path"), true, "interaction logger may read file paths to create sanitized metadata")
+    expectEqual(logger.contains("\"path\""), false, "interaction logger does not write a raw path field")
+    expectEqual(logger.contains("\"fileName\""), false, "interaction logger does not write raw file names")
+    expectEqual(logger.contains("\"displayName\""), false, "interaction logger does not write display names from file paths")
+    expectEqual(logger.contains("\"nameLength\""), true, "interaction logger keeps only coarse name metadata")
+
+    expectEqual(controller.contains("IslandInteractionLogger"), true, "panel owns the interaction logger")
+    expectEqual(controller.contains("interactionLogger.log(\"app.launch\""), true, "panel logs app launch")
+    expectEqual(controller.contains("displayLogMetadata"), true, "panel builds sanitized display metadata for release diagnostics")
+    expectEqual(controller.contains("interactionLogger.log(\"display.metrics.changed\""), true, "panel logs display metric changes for notch and scaling diagnostics")
+    expectEqual(controller.contains("\"hasCameraHousing\""), true, "display diagnostics record whether the current screen has a camera housing")
+    expectEqual(controller.contains("\"safeAreaTopInset\""), true, "display diagnostics record the top safe-area inset")
+    expectEqual(controller.contains("\"screenWidth\""), true, "display diagnostics record logical screen width")
+    expectEqual(controller.contains("interactionLogger.log(\"panel.show\""), true, "panel logs show requests")
+    expectEqual(controller.contains("interactionLogger.log(\"panel.hide\""), true, "panel logs hide requests")
+    expectEqual(controller.contains("interactionLogger.log(\"shell.expanded\""), true, "panel logs expand and collapse transitions")
+    expectEqual(controller.contains("interactionLogger.log(\"shell.hidden\""), true, "panel logs scroll hide/show transitions")
+    expectEqual(controller.contains("interactionLogger.log(\"scroll.gesture.locked\""), true, "panel logs scroll gesture axis locks")
+    expectEqual(controller.contains("interactionLogger.log(\"music.skip.commit\""), true, "panel logs committed music skip gestures")
+    expectEqual(controller.contains("interactionLogger.log(\"music.playback.changed\""), true, "panel logs music playback changes")
+    expectEqual(controller.contains("interactionLogger.log(\"file.drop.accepted\""), true, "panel logs accepted file drops")
+    expectEqual(controller.contains("IslandInteractionLogger.sanitizedFileMetadata"), true, "file drop logs use sanitized metadata")
+    expectEqual(controller.contains("interactionLogger.log(\"file.shelf.select\""), true, "panel logs file shelf selection")
+    expectEqual(controller.contains("interactionLogger.log(\"file.drag.start\""), true, "panel logs external file drag starts")
+    expectEqual(controller.contains("interactionLogger.log(\"file.drag.completed\""), true, "panel logs external file drag completion")
+    expectEqual(controller.contains("interactionLogger.log(\"file.shelf.remove\""), true, "panel logs single file removal")
+    expectEqual(controller.contains("interactionLogger.log(\"file.shelf.clear\""), true, "panel logs clearing the shelf")
+    expectEqual(controller.contains("interactionLogger.log(\"file.shelf.done\""), true, "panel logs Done overlay closes")
+    expectEqual(controller.contains("interactionLogger.log(\"file.shelf.filter\""), true, "panel logs file shelf filter changes")
 }
 
 private func testKeepsExpandableEmptyShellOnly() {
@@ -129,21 +429,30 @@ private func testKeepsExpandableEmptyShellOnly() {
     let appDelegate = source("Sources/DynamicIsland/Controllers/AppDelegate.swift")
     let trackingView = source("Sources/DynamicIsland/Views/IslandTrackingHostingView.swift")
     let musicSource = source("Sources/DynamicIsland/Support/MusicPlaybackDataSource.swift")
+    let debugMusicSignal = source("Sources/DynamicIsland/Support/DebugMusicSignal.swift")
     let avatarView = source("Sources/DynamicIsland/Views/ClosedMusicAvatarView.swift")
     let waveformView = source("Sources/DynamicIsland/Views/ClosedMusicWaveformView.swift")
     let islandShape = source("Sources/DynamicIsland/Views/IslandShape.swift")
     let buildScript = source("script/build_and_run.sh")
+    let musicSignalScript = source("script/send_music_signal.sh")
 
-    expectEqual(overlay.contains("Color.white"), true, "overlay keeps the default shell fill white")
+    expectEqual(overlay.contains("shellFillColor"), true, "overlay routes shell fill through a dedicated style property")
+    expectEqual(overlay.contains("private var shellFillColor: Color {\n        .black\n    }"), true, "overlay uses a black shell fill")
+    expectEqual(overlay.contains("private var foregroundContentColor: Color {\n        .white\n    }"), true, "overlay uses white foreground content on the black shell")
     expectEqual(overlay.contains("onExpansionChange(true)"), true, "overlay tap can expand the shell")
     expectEqual(overlay.contains("isShellHidden"), true, "overlay can visually hide the shell while keeping the tracking zone alive")
     expectEqual(overlay.contains("isTrackInfoPresented"), true, "overlay can present transient track info")
-    expectEqual(overlay.contains("musicSkipFeedbackDirection"), false, "overlay no longer presents horizontal skip feedback")
-    expectEqual(overlay.contains("musicSkipGestureProgress"), false, "overlay no longer tracks horizontal skip progress")
+    expectEqual(overlay.contains("musicSkipFeedbackDirection"), true, "overlay presents horizontal skip feedback inside the shell")
+    expectEqual(overlay.contains("musicSkipGestureProgress"), true, "overlay drives horizontal skip feedback from gesture progress")
+    expectEqual(overlay.contains("@Published var isMusicSkipArmed = false"), true, "overlay state tracks whether a horizontal skip is armed")
     expectEqual(overlay.contains("musicTrackInfoShellHeight"), true, "overlay expands the music shell downward for track info")
     expectEqual(overlay.contains("musicArtworkSize"), true, "overlay enlarges album artwork for track info")
     expectEqual(overlay.contains("trackTitleText"), true, "overlay renders track title text")
     expectEqual(overlay.contains("trackArtistText"), true, "overlay renders track artist text")
+    expectEqual(overlay.contains("private let trackInfoTextCenterY: CGFloat = 55"), true, "track info text is lowered below the camera housing haze")
+    expectEqual(overlay.contains("showsTrackInfo ? 50 : musicAccessoryCenterY"), true, "track info artwork is lowered with the expanded music shell")
+    expectEqual(overlay.contains("y: trackInfoTextCenterY"), true, "track info text position uses the lowered safe constant")
+    expectEqual(overlay.contains("y: 49"), false, "track info text no longer sits at the old notch-overlapping height")
     expectEqual(overlay.contains("hiddenShellHorizontalScale"), true, "overlay squeezes the shell horizontally during hide/show transition")
     expectEqual(overlay.contains("state.isShellHidden ? 0.04 : 1"), true, "hidden shell closes from both sides toward the center")
     expectEqual(overlay.contains("hiddenShellOpacity"), true, "overlay fades the shell during hide/show transition")
@@ -157,6 +466,11 @@ private func testKeepsExpandableEmptyShellOnly() {
     expectEqual(overlay.contains("state.musicPlayback.isPlaying && !state.isShellHidden"), true, "overlay keeps music accessories visible while playing unless the shell is hidden")
     expectEqual(overlay.contains("metrics.closedMusicAccessorySize > 0"), true, "overlay does not animate zero-size compact music accessories")
     expectEqual(overlay.contains("metrics.musicClosedShellWidth"), true, "overlay animates the closed shell to the wider music width only while music is playing")
+    expectEqual(overlay.contains("closedShellWidth + musicSkipEdgeExpansion"), true, "skip feedback expands the visible shell only during the gesture")
+    expectEqual(overlay.contains("musicSkipEdgeExpansionMax"), true, "overlay has a bounded one-sided skip expansion amount")
+    expectEqual(overlay.contains("private var shellHorizontalOffset"), true, "skip feedback offsets the shell to keep the opposite side fixed")
+    expectEqual(overlay.contains("direction == .next ? musicSkipEdgeExpansion / 2 : -musicSkipEdgeExpansion / 2"), true, "right swipe expands right and left swipe expands left")
+    expectEqual(overlay.contains("private var contentOriginShiftX"), true, "left-side expansion keeps the existing album and waveform positions stable")
     expectEqual(overlay.contains("value: state.musicPlayback.isPlaying"), true, "overlay syncs shell width animation with music playback state")
     expectEqual(overlay.contains("musicArtworkCenterX"), true, "overlay animates artwork between closed and expanded positions")
     expectEqual(overlay.contains("musicWaveformCenterX"), true, "overlay animates waveform between closed and expanded positions")
@@ -168,10 +482,19 @@ private func testKeepsExpandableEmptyShellOnly() {
     expectEqual(overlay.contains("VStack(alignment: .center"), true, "track title and artist are centered")
     expectEqual(overlay.contains(".multilineTextAlignment(.center)"), true, "track title and artist text aligns centered")
     expectEqual(overlay.contains(".linear(duration: 0.22)"), true, "track info uses linear animation")
-    expectEqual(overlay.contains("skip.forward.fill"), false, "right swipe feedback icon is removed")
-    expectEqual(overlay.contains("skip.backward.fill"), false, "left swipe feedback icon is removed")
-    expectEqual(overlay.contains("musicSkipFeedbackIcon"), false, "skip feedback view is removed")
-    expectEqual(overlay.contains("musicSkipStyleIsActive"), false, "skip feedback shell style gate is removed")
+    expectEqual(overlay.contains("MusicSkipGlyph"), true, "skip feedback uses a visible in-app glyph instead of relying on a system symbol")
+    expectEqual(overlay.contains("Image(systemName: direction == .next ? \"forward.end.fill\" : \"backward.end.fill\")"), true, "skip feedback uses Apple-style media control SF Symbols")
+    expectEqual(overlay.contains("TriangleSkipSegment"), false, "skip feedback no longer uses hand-drawn triangle media glyphs")
+    expectEqual(overlay.contains("musicSkipFeedbackIcon"), true, "skip feedback uses a dedicated in-shell icon view")
+    expectEqual(overlay.contains("state.isMusicSkipArmed ? 1 : progress"), true, "armed skip feedback gives a clear ready-to-commit visual")
+    expectEqual(overlay.contains("state.isMusicSkipArmed ? 1.08"), true, "armed skip feedback lightly grows the in-shell icon")
+    expectEqual(overlay.contains("musicSkipEdgeExpansion - minimumCenterX"), true, "right skip icon rides the expanding shell edge")
+    expectEqual(overlay.contains("case .previous:\n            return minimumCenterX"), true, "left skip icon rides the expanding shell edge")
+    expectEqual(overlay.contains("min(1, max(0, state.musicSkipGestureProgress))"), true, "skip feedback clamps gesture progress")
+    expectEqual(overlay.contains("if let direction = state.musicSkipFeedbackDirection"), true, "skip feedback is rendered in the shell content stack")
+    expectEqual(overlay.contains("musicSkipFeedbackIcon(direction)"), true, "skip feedback icon is inside the clipped island shell")
+    expectEqual(overlay.contains("NSPopover"), false, "skip feedback is not implemented as an external popover")
+    expectEqual(overlay.contains("floating"), false, "skip feedback is not implemented as a floating HUD")
     expectEqual(overlay.contains("NSColor.systemPink"), false, "skip feedback waveform tint is removed")
     expectEqual(overlay.contains("concaveTopRadius:"), true, "overlay passes a separate concave top radius to the shell shape")
     expectEqual(overlay.contains("cameraCutoutWidth:"), false, "default shell stays as one continuous shape instead of cutting out the camera housing")
@@ -198,7 +521,7 @@ private func testKeepsExpandableEmptyShellOnly() {
     expectEqual(avatarView.contains("RoundedRectangle"), true, "compact avatar uses rounded album artwork")
     expectEqual(avatarView.contains("repeatForever"), false, "compact avatar stays static")
     expectEqual(avatarView.contains("rotationEffect"), false, "compact avatar does not rotate")
-    expectEqual(avatarView.contains("Color.black"), true, "compact avatar fallback uses black contrast on the white shell")
+    expectEqual(avatarView.contains("Color.white"), true, "compact avatar fallback stays visible on the black shell")
     expectEqual(avatarView.contains(".stroke("), false, "compact avatar avoids an extra outline box around real artwork")
     expectEqual(avatarView.contains(".shadow("), false, "compact avatar avoids an extra square shadow around real artwork")
     expectEqual(avatarView.contains("AngularGradient"), false, "compact avatar fallback no longer uses a colored gradient")
@@ -207,59 +530,104 @@ private func testKeepsExpandableEmptyShellOnly() {
     expectEqual(waveformView.contains("TimelineView"), false, "compact waveform does not run a continuous timeline in the closed shell")
     expectEqual(waveformView.contains("CABasicAnimation"), true, "compact waveform bars animate through Core Animation")
     expectEqual(waveformView.contains("transform.scale.y"), true, "compact waveform animates bar height on layers")
-    expectEqual(waveformView.contains("NSColor.black"), true, "compact waveform uses black contrast on the white shell")
+    expectEqual(waveformView.contains("NSColor.white"), true, "compact waveform uses white contrast on the black shell")
     expectEqual(waveformView.contains("barColor: NSColor"), false, "compact waveform has no unused skip tint API")
     expectEqual(waveformView.contains("ForEach(0..<4"), false, "compact waveform is no longer the simple four-bar placeholder")
     expectEqual(avatarView.contains("Text("), false, "compact avatar contains no text that can touch guard bounds")
     expectEqual(waveformView.contains("Text("), false, "compact waveform contains no text that can touch guard bounds")
     expectEqual(controller.contains("onMouseEntered = { [weak self] in"), true, "panel still listens for mouse enter")
     expectEqual(controller.contains("onMouseEntered = { [weak self] in\n            self?.setExpanded(true)\n        }"), false, "panel does not auto-expand on mouse enter")
+    expectEqual(trackingView.contains("var onMouseMoved"), true, "tracking view reports cursor movement within the transparent panel")
+    expectEqual(trackingView.contains(".mouseMoved"), true, "tracking area receives real cursor movement updates")
+    expectEqual(controller.contains("onMouseMoved = { [weak self] in"), true, "panel continuously syncs hover with the precise shell path")
     expectEqual(controller.contains("onMouseExited = { [weak self] in"), true, "panel still listens for mouse exit")
     expectEqual(trackingView.contains("override func scrollWheel"), true, "tracking view handles notch scroll gestures")
     expectEqual(trackingView.contains("onScroll?"), true, "tracking view forwards scroll delta to the controller")
-    expectEqual(trackingView.contains("onScroll?(event.scrollingDeltaY)"), true, "tracking view forwards only vertical scroll delta")
-    expectEqual(trackingView.contains("scrollingDeltaX"), false, "tracking view no longer forwards horizontal scroll delta")
-    expectEqual(controller.contains("onScroll = { [weak self] deltaY in"), true, "panel installs a vertical scroll gesture callback")
-    expectEqual(controller.contains("scrollActivationThreshold: CGFloat = 0.8"), true, "scroll hide/show uses a low trackpad activation threshold")
-    expectEqual(controller.contains("horizontalStartThreshold"), false, "horizontal skip threshold is removed")
-    expectEqual(controller.contains("horizontalCommitThreshold"), false, "horizontal skip commit threshold is removed")
-    expectEqual(controller.contains("gestureResetDelay"), false, "horizontal gesture reset delay is removed")
-    expectEqual(controller.contains("enum ActiveScrollGesture"), false, "scroll axis lock is removed with horizontal skip")
-    expectEqual(controller.contains("case horizontal"), false, "horizontal gesture lock case is removed")
-    expectEqual(controller.contains("accumulatedScrollDeltaX"), false, "horizontal scroll accumulation is removed")
-    expectEqual(controller.contains("accumulatedScrollDeltaY"), false, "vertical scroll accumulation is no longer needed")
-    expectEqual(controller.contains("hasTriggeredHorizontalSkip"), false, "one-shot horizontal skip state is removed")
-    expectEqual(controller.contains("gestureResetWorkItem"), false, "horizontal gesture reset work item is removed")
-    expectEqual(controller.contains("handleScroll(deltaY: deltaY)"), true, "scroll handling is centralized for vertical hide/show")
-    expectEqual(controller.contains("let pointerInsideIsland = panel.frame.contains(NSEvent.mouseLocation)"), true, "all scroll gestures first verify the pointer is inside the island tracking zone")
+    expectEqual(trackingView.contains("onScroll?(event.scrollingDeltaX, event.scrollingDeltaY, event.phase, event.momentumPhase)"), true, "tracking view forwards scroll delta with real trackpad phase data")
+    expectEqual(controller.contains("onScroll = { [weak self] deltaX, deltaY, phase, momentumPhase in"), true, "panel installs a phase-aware two-axis scroll gesture callback")
+    expectEqual(controller.contains("gestureAxisLockThreshold: CGFloat = 6"), true, "scroll gestures require a deliberate real-user movement before locking an axis")
+    expectEqual(controller.contains("scrollActivationThreshold: CGFloat = 6"), true, "vertical hide/show requires deliberate trackpad movement")
+    expectEqual(controller.contains("horizontalCommitDistance: CGFloat = 50"), true, "horizontal skip progress commits at 50pt")
+    expectEqual(controller.contains("horizontalCancelDistance: CGFloat = 38"), true, "horizontal skip has a smaller cancel boundary after arming")
+    expectEqual(controller.contains("gestureResetDelay"), true, "scroll gestures reset shortly after events stop")
+    expectEqual(controller.contains("enum ActiveScrollGesture"), true, "scroll sequences lock to one gesture axis")
+    expectEqual(controller.contains("case horizontal"), true, "horizontal gesture lock supports skip")
+    expectEqual(controller.contains("accumulatedScrollDeltaX"), true, "horizontal scroll delta is accumulated for progress")
+    expectEqual(controller.contains("pendingHorizontalSkipDirection"), true, "horizontal skip stores a pending direction before committing")
+    expectEqual(controller.contains("isHorizontalSkipArmed"), true, "horizontal skip can be armed and cancelled before gesture end")
+    expectEqual(controller.contains("scrollGestureUsesExplicitPhase"), true, "trackpad gestures with NSEvent phases are tracked separately from wheel fallback gestures")
+    expectEqual(controller.contains("(phase.contains(.began) || phase.contains(.mayBegin)) && !scrollGestureUsesExplicitPhase"), true, "explicit trackpad gestures do not repeatedly reset after the first phase event")
+    expectEqual(controller.contains("scrollPhaseDescription"), true, "scroll gesture logs include phase diagnostics for real touchpad validation")
+    expectEqual(controller.contains("\"phase\": Self.scrollPhaseDescription(phase)"), true, "axis lock logs record the NSEvent phase")
+    expectEqual(controller.contains("\"usesExplicitPhase\": scrollGestureUsesExplicitPhase"), true, "axis lock logs record whether phase-aware commit mode is active")
+    expectEqual(controller.contains("overlayState.isMusicSkipArmed = true"), true, "controller exposes armed skip state to the overlay")
+    expectEqual(controller.contains("overlayState.isMusicSkipArmed = false"), true, "controller clears armed skip state on cancel, reset, commit, or hide")
+    expectEqual(controller.contains("hasTriggeredHorizontalSkip"), true, "horizontal skip triggers only once per gesture")
+    expectEqual(controller.contains("commitPendingHorizontalMusicSkipIfNeeded"), true, "horizontal skip commits only when the gesture ends or resets")
+    expectEqual(controller.contains("cancelPendingHorizontalMusicSkip"), true, "horizontal skip can be cancelled by reversing into the cancel boundary")
+    expectEqual(controller.contains("finalizeScrollGesture(shouldCommitPendingSkip: scrollGestureEnded)"), true, "trackpad phase end is the explicit commit point for armed horizontal skips")
+    expectEqual(controller.contains("if !scrollGestureUsesExplicitPhase {\n            scheduleGestureReset()\n        }"), true, "phase-aware trackpad gestures do not commit from an idle timer while the finger may still be down")
+    expectEqual(controller.contains("resetScrollGesture(shouldCommitPendingSkip: Bool = true)"), true, "gesture reset can distinguish commit from cancellation")
+    expectEqual(controller.contains("shouldCommitPendingSkip && commitPendingHorizontalMusicSkipIfNeeded()"), true, "cancelled gestures cannot commit an armed skip")
+    expectEqual(controller.contains("interactionLogger.log(\"music.skip.armed\""), true, "panel logs when a horizontal skip reaches the commit boundary")
+    expectEqual(controller.contains("interactionLogger.log(\"music.skip.cancelled\""), true, "panel logs when an armed horizontal skip is cancelled")
+    expectEqual(controller.contains("gestureResetWorkItem"), true, "horizontal gesture reset work item is used")
+    expectEqual(controller.contains("scrollSuppressionAfterExpansionDuration: TimeInterval = 0.35"), true, "expanded shell suppresses stale scroll events briefly after opening")
+    expectEqual(controller.contains("private var scrollSuppressionUntil: Date?"), true, "panel tracks a temporary scroll suppression deadline")
+    expectEqual(controller.contains("scrollSuppressionUntil = Date().addingTimeInterval(Self.scrollSuppressionAfterExpansionDuration)"), true, "expanding the shell arms the stale-scroll suppression window")
+    expectEqual(controller.contains("Date() < scrollSuppressionUntil"), true, "scroll handling ignores events that arrive during the post-expansion suppression window")
+    expectEqual(controller.contains("handleScroll(deltaX: deltaX, deltaY: deltaY, phase: phase, momentumPhase: momentumPhase)"), true, "scroll handling is centralized for phase-aware gestures")
+    expectEqual(controller.contains("pointerInsideInteractiveShell()"), true, "all scroll gestures first verify the pointer is inside the visible shell, not the transparent panel")
+    expectEqual(controller.contains("currentShellFrameInScreenCoordinates"), true, "panel derives an accurate shell hit-test frame in screen coordinates")
+    expectEqual(controller.contains("currentShellPathForHitTesting"), true, "pointer hit testing uses the actual IslandShape path, not only a rectangle")
+    expectEqual(controller.contains("IslandShape("), true, "controller reuses the shell shape for precise hit testing")
+    expectEqual(controller.contains("panel.frame.contains(NSEvent.mouseLocation)"), false, "pointer hit testing no longer uses the oversized transparent panel frame")
+    expectEqual(controller.contains("momentumPhase.isEmpty"), true, "trackpad momentum events do not start new gestures")
     expectEqual(controller.contains("guard pointerInsideIsland else"), true, "scroll gestures outside the island tracking zone are ignored")
     expectEqual(controller.contains("if overlayState.isShellHidden"), true, "hidden state has first priority in scroll handling")
-    expectEqual(controller.contains("deltaY < -Self.scrollActivationThreshold"), true, "natural trackpad upward scroll hides the shell with a short gesture")
-    expectEqual(controller.contains("deltaY > Self.scrollActivationThreshold"), true, "natural trackpad downward scroll restores the hidden shell")
-    expectEqual(controller.contains("performMusicSkip"), false, "panel no longer commits horizontal music skip")
+    expectEqual(controller.contains("accumulatedScrollDeltaY < -Self.scrollActivationThreshold"), true, "natural trackpad upward scroll hides the shell with a short gesture")
+    expectEqual(controller.contains("accumulatedScrollDeltaY > Self.scrollActivationThreshold"), true, "natural trackpad downward scroll restores the hidden shell")
+    expectEqual(controller.contains("accumulatedScrollDeltaX < 0 ? .previous : .next"), true, "horizontal skip direction follows the user's natural trackpad direction")
+    expectEqual(controller.contains("accumulatedScrollDeltaX < 0 ? .next : .previous"), false, "horizontal skip direction is no longer reversed")
+    expectEqual(controller.contains("min(abs(accumulatedScrollDeltaX) / Self.horizontalCommitDistance, 1)"), true, "horizontal feedback progress follows the requested formula")
+    expectEqual(controller.contains("guard progress >= 1, !hasTriggeredHorizontalSkip else { return }"), false, "horizontal skip no longer commits immediately while the user may still cancel")
+    expectEqual(controller.contains("performMusicSkip(direction)"), true, "panel commits horizontal music skip")
     expectEqual(controller.contains("setShellHidden(false)"), true, "natural trackpad downward scroll restores the hidden shell")
-    expectEqual(controller.contains("overlayState.isHovered = panel.frame.contains(NSEvent.mouseLocation)"), true, "restored shell immediately reflects hover when the pointer is still over the notch zone")
+    expectEqual(controller.contains("syncHoverWithPointer()"), true, "restored shell immediately reflects hover using the accurate shell hit test")
     expectEqual(overlay.contains("!state.isShellHidden"), true, "hidden shell does not reveal hover or accept expansion taps")
     expectEqual(overlay.contains(".allowsHitTesting(!state.isShellHidden)"), true, "hidden shell disables SwiftUI hit testing")
     expectEqual(controller.contains("panel.ignoresMouseEvents = hidden"), true, "hidden shell lets hover and click events pass through")
     expectEqual(controller.contains("NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel)"), true, "hidden shell keeps only a transparent scroll restore monitor")
-    expectEqual(controller.contains("panel.frame.contains(NSEvent.mouseLocation)"), true, "hidden restore only responds inside the notch tracking zone")
+    expectEqual(controller.contains("guard self.pointerInsideInteractiveShell() else { return }"), true, "hidden restore only responds inside the precise shell tracking zone")
     expectEqual(controller.contains("withAnimation(.easeInOut(duration: 0.22))"), true, "scroll hide/show uses a smooth transition")
     expectEqual(controller.contains("guard !usesOpenCanvas else { return metrics.openCompletionFeedbackWindowSize }"), true, "expanded canvas still uses the open shell size")
-    expectEqual(controller.contains("metrics.musicClosedShellWidth + Self.closedHoverHorizontalSlack"), true, "closed canvas keeps horizontal room for music width and hover scale")
+    expectEqual(controller.contains("metrics.musicClosedShellWidth + Self.closedCanvasHorizontalSlack"), true, "closed canvas keeps horizontal room for hover and one-sided skip expansion")
     expectEqual(controller.contains("(showsTrackInfo ? metrics.musicTrackInfoShellHeight : metrics.closedHeight) + Self.closedHoverBottomSlack"), true, "closed canvas expands only while track info is visible")
     expectEqual(controller.contains("startMusicPlaybackPolling"), true, "panel polls supported music players for compact accessories")
     expectEqual(controller.contains("2_000_000_000"), true, "panel uses a modest music polling interval")
+    expectEqual(appDelegate.contains("NSApplication.didChangeScreenParametersNotification"), true, "app listens for Apple display scaling and screen parameter changes")
+    expectEqual(appDelegate.contains("screenConfigurationDidChange"), true, "app routes display changes through a dedicated handler")
+    expectEqual(appDelegate.contains("panelController?.refreshForCurrentScreen()"), true, "display scaling changes refresh island metrics and position")
     expectEqual(controller.contains("trackInfoDismissDelay: TimeInterval = 2.5"), true, "track info auto-dismisses after 2.5 seconds")
     expectEqual(controller.contains("lastPresentedTrackIdentity"), true, "panel detects song changes")
     expectEqual(controller.contains("trackInfoDismissWorkItem"), true, "panel cancels stale track info dismissals")
     expectEqual(controller.contains("overlayState.isTrackInfoPresented = true"), true, "panel shows track info when the song changes")
     expectEqual(controller.contains("overlayState.isTrackInfoPresented = false"), true, "panel restores default music state after track info")
-    expectEqual(controller.contains("musicSkipFeedbackDirection"), false, "panel no longer presents directional skip feedback")
-    expectEqual(musicSource.contains("enum MusicSkipDirection"), false, "music source no longer models skip directions")
-    expectEqual(musicSource.contains("func skipTrack"), false, "music source no longer performs skip commands")
-    expectEqual(musicSource.contains("next track"), false, "music source no longer sends next-track AppleScript")
-    expectEqual(musicSource.contains("previous track"), false, "music source no longer sends previous-track AppleScript")
+    expectEqual(controller.contains("overlayState.musicSkipFeedbackDirection = direction"), true, "panel presents directional skip feedback")
+    expectEqual(controller.contains("overlayState.musicSkipGestureProgress = 0"), true, "panel dismisses skip feedback after gesture end")
+    expectEqual(controller.contains("startDebugMusicSignalPolling"), true, "panel can poll an explicit debug music signal")
+    expectEqual(controller.contains("ISLAND_DEBUG_MUSIC_SIGNAL_FILE"), true, "debug music signal requires an explicit environment variable")
+    expectEqual(controller.contains("ISLAND_DEBUG_EXPANDED_ON_LAUNCH"), true, "debug visual QA can launch directly into the expanded shell without cursor control")
+    expectEqual(controller.contains("ISLAND_DEBUG_FILE_SHELF_URLS"), true, "debug visual QA can launch with visible file shelf contents")
+    expectEqual(controller.contains("shouldStartExpandedForDebug"), true, "debug expanded launch is isolated behind an explicit environment check")
+    expectEqual(controller.contains("160_000_000"), true, "debug music signal polling uses a conservative low-overhead interval")
+    expectEqual(musicSource.contains("enum MusicSkipDirection"), true, "music source models previous and next skip directions")
+    expectEqual(musicSource.contains("func skipTrack(_ direction: MusicSkipDirection) async -> Bool"), true, "music source performs skip commands")
+    expectEqual(musicSource.contains("next track"), true, "music source sends next-track AppleScript")
+    expectEqual(musicSource.contains("previous track"), true, "music source sends previous-track AppleScript")
+    expectEqual(debugMusicSignal.contains("struct DebugMusicSignal"), true, "debug music signal is parsed by a dedicated support type")
+    expectEqual(debugMusicSignal.contains("JSONDecoder"), true, "debug music signal uses structured JSON parsing")
+    expectEqual(musicSignalScript.contains("ISLAND_DEBUG_MUSIC_SIGNAL_FILE"), true, "debug music signal sender targets the explicit signal file")
     expectEqual(controller.contains("ScreenMetricsProvider.profile"), true, "panel keeps display-aware shell sizing")
     expectEqual(appDelegate.contains("Show Dynamic Island"), true, "status menu can show the shell")
     expectEqual(appDelegate.contains("Hide Dynamic Island"), true, "status menu can hide the shell")
@@ -270,15 +638,11 @@ private func testKeepsExpandableEmptyShellOnly() {
         "StatusDotView",
         "AudioWaveformView",
         "DataPanelView",
-        "TemporaryFileShelfView",
         "taskActivityDataSource",
         "audioPlaybackDataSource",
-        "TemporaryFileShelfStore",
         "startTaskActivityPolling",
         "startAudioPlaybackPolling",
-        "startTemporaryFileShelfPruning",
         "Preview Completion Bounce",
-        "registerForDraggedTypes",
         "NSScreenCaptureUsageDescription"
     ]
 
@@ -293,13 +657,19 @@ private func testKeepsExpandableEmptyShellOnly() {
 
 private func testRemovedFeatureFilesAreGone() {
     let removedFiles = [
+        "Sources/DynamicIslandCore/CalendarHeatmap.swift",
+        "Sources/DynamicIslandCore/CalendarHeatmapVisualPolicy.swift",
+        "Sources/DynamicIslandCore/CodexUsage.swift",
+        "Sources/DynamicIslandCore/DataPanelMode.swift",
+        "Sources/DynamicIslandCore/DataPanelTooltipPolicy.swift",
+        "Sources/DynamicIslandCore/IslandFeature.swift",
+        "Sources/DynamicIslandCore/TaskActivityState.swift",
+        "Sources/DynamicIslandCore/UsageTrendTimeline.swift",
         "Sources/DynamicIsland/Views/StatusDotView.swift",
         "Sources/DynamicIsland/Views/AudioWaveformView.swift",
         "Sources/DynamicIsland/Views/DataPanelView.swift",
-        "Sources/DynamicIsland/Views/TemporaryFileShelfView.swift",
         "Sources/DynamicIsland/Support/AudioPlaybackDataSource.swift",
         "Sources/DynamicIsland/Support/TaskActivityDataSource.swift",
-        "Sources/DynamicIsland/Support/TemporaryFileShelfStore.swift",
         "Sources/DynamicIsland/Support/CodexUsageDataSource.swift",
         "Sources/DynamicIsland/Support/CCSwitchUsageDataSource.swift"
     ]
@@ -315,12 +685,18 @@ private func testBuildScriptStillPackagesSignedApp() {
     expectEqual(buildScript.contains("swift build --product \"$APP_PRODUCT_NAME\""), true, "build script compiles Dynamic Island product")
     expectEqual(buildScript.contains("codesign --force --deep --sign"), true, "build script signs the app bundle")
     expectEqual(buildScript.contains("/usr/bin/open -n \"$APP_BUNDLE\""), true, "build script can launch the packaged app")
+    expectEqual(buildScript.contains("--debug-music-signal"), true, "build script can launch the app with an explicit debug music signal file")
+    expectEqual(buildScript.contains("--env ISLAND_DEBUG_MUSIC_SIGNAL_FILE="), true, "debug music signal mode passes the signal path through LaunchServices")
     expectEqual(buildScript.contains("--verify"), true, "build script keeps verification mode")
 }
 
 testDerivesApprovedFourteenInchNotchMetrics()
 testTopStatusBandUsesFivePointBoundary()
 testDisplayProfileDerivesMetricsFromScreenSignature()
+testReleaseDisplayAdaptationMatrixAndLeanContracts()
+testTemporaryFileShelfCoreModel()
+testTemporaryFileShelfExpandedDropIntegration()
+testInteractionLoggingContract()
 testKeepsExpandableEmptyShellOnly()
 testRemovedFeatureFilesAreGone()
 testBuildScriptStillPackagesSignedApp()

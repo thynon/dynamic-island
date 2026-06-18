@@ -24,10 +24,6 @@ struct DisplayProfileStore: Sendable {
         return profile
     }
 
-    func currentProfile() -> DisplayProfile? {
-        loadProfile()
-    }
-
     func save(_ profile: DisplayProfile) {
         do {
             try FileManager.default.createDirectory(

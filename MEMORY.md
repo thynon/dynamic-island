@@ -27,6 +27,228 @@ Each event should use this shape:
 
 ## Events
 
+### 2026-06-18 - natural-horizontal-skip-direction-and-sf-symbol
+- Reason: User reported that horizontal music skip felt reversed relative to the trackpad interaction, and the custom next icon did not match Apple media-control styling.
+- Changed:
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Horizontal skip direction mapping is inverted so negative horizontal delta now maps to previous and positive horizontal delta maps to next. The skip feedback glyph now uses SF Symbols `forward.end.fill` and `backward.end.fill` instead of hand-drawn triangle segments, keeping the icon inside the clipped island shell.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `git diff --check`; debug music-signal launch with CGEvent horizontal tests confirmed negative delta logs `previous` and positive delta logs `next`; screenshot `/tmp/dynamic-island-next-symbol.png` captured the new in-shell SF Symbol feedback.
+- Rollback: Restore the previous delta mapping only if real trackpad testing shows physical left/right directions still feel inverted. Restore the custom glyph only if SF Symbols render poorly on the target macOS release.
+
+### 2026-06-18 - phase-ended-music-skip-commit
+- Reason: User clarified that left/right music skip should wait until the finger leaves the trackpad before switching tracks, while preserving rollback cancellation.
+- Changed:
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Scroll handling now tracks whether a gesture has explicit `NSEvent.phase` data. Phase-aware trackpad gestures no longer use the idle reset timer to commit an armed skip; they commit only when the phase ends, cancel on cancellation, and still allow rollback to the `38pt` cancel boundary before ending. Axis-lock logs include phase diagnostics for real-device validation.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `git diff --check`; debug music-signal launch with CGScrollPhase tests confirmed armed state persists past the old idle timeout, commit appears only after ended phase, and rollback cancellation prevents later commit.
+- Rollback: Restore idle-timer commit for all scroll sources only if physical trackpad phase events prove unreliable on target devices.
+
+### 2026-06-18 - armed-skip-rollback-feedback
+- Reason: User wanted the horizontal music skip gesture to have a clearer rollback/cancel interaction instead of only logical cancellation.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Added `isMusicSkipArmed` to the overlay state. Crossing the `50pt` skip threshold now gives the in-shell icon an explicit ready-to-commit visual, while sliding back to the `38pt` cancel boundary clears the armed state, keeps the gesture cancellable, and springs the feedback away on reset. Commit still happens only at gesture end/reset.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `git diff --check`; debug music-signal app launch; CGEvent tests confirmed right-swipe `next` commit, left-swipe `previous` commit, right-swipe rollback cancellation without commit, vertical hide/show, and armed-frame screenshot `/tmp/dynamic-island-skip-armed-2.png`.
+- Rollback: Revert `isMusicSkipArmed` state and its controller assignments if the armed visual confirmation feels too prominent.
+
+### 2026-06-18 - music-track-info-offset-and-cancellable-skip
+- Reason: User reported that transient music title/artist text was visually blocked by the notch haze and wanted horizontal track-skip gestures to allow cancelling by sliding back before release.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Track-change text now uses a lowered `trackInfoTextCenterY` and the enlarged artwork is also lowered to avoid the camera housing haze. Horizontal skip gestures now arm at `50pt`, remain cancellable until gesture end, and cancel if the accumulated horizontal delta returns to the `38pt` cancel boundary before release. Skip feedback still follows `progress = min(abs(accumulatedDeltaX) / 50, 1)` and the actual skip command is only submitted during gesture reset/end.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `git diff --check`; `./script/build_and_run.sh --verify`; `./script/build_and_run.sh`; process check showed DynamicIsland at `0.0%` CPU and `0.1%` memory; launch log `session-20260618-120043-67958.jsonl` recorded app startup and display metrics.
+- Rollback: Revert the track info Y constants and the pending/armed horizontal skip state if immediate skip-on-threshold behavior is preferred again.
+
+### 2026-06-18 - release-display-adaptation-and-core-trim
+- Reason: User requested broader release readiness for different MacBook notch sizes and non-notch displays, plus visual/data verification and code trimming to keep the app lighter with lower overhead.
+- Changed:
+  - `Sources/DynamicIslandCore/NotchMetrics.swift`
+  - `Sources/DynamicIslandCore/CalendarHeatmap.swift`
+  - `Sources/DynamicIslandCore/CalendarHeatmapVisualPolicy.swift`
+  - `Sources/DynamicIslandCore/CodexUsage.swift`
+  - `Sources/DynamicIslandCore/DataPanelMode.swift`
+  - `Sources/DynamicIslandCore/DataPanelTooltipPolicy.swift`
+  - `Sources/DynamicIslandCore/IslandFeature.swift`
+  - `Sources/DynamicIslandCore/TaskActivityState.swift`
+  - `Sources/DynamicIslandCore/UsageTrendTimeline.swift`
+  - `Sources/DynamicIsland/Support/ScreenMetricsProvider.swift`
+  - `Sources/DynamicIsland/Support/DisplayProfileStore.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Added release matrix coverage for compact notched displays, 14-inch default, 14-inch More Space, 16-inch notched displays, and standard non-notch displays. Display diagnostics now log sanitized screen width/height, top safe-area inset, backing scale, camera housing presence, and derived open island size on launch or when metrics change. Removed unused metrics fields/helpers and deleted old unused Stats/Usage/TaskActivity Core modules from the current release build while keeping the active music, display metrics, animation, shape, and temporary file shelf modules.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `swift build -c release --product DynamicIsland`; `git diff --check`; `./script/build_and_run.sh --verify`; debug visual screenshot `/tmp/dynamic-island-visual-audit/release-adaptation-crop.png`; app launch log `session-20260618-114927-59699.jsonl` recorded `screenWidth=1800`, `screenHeight=1169`, `safeAreaTopInset=38`, `hasCameraHousing=true`, `openWidth=760`, `openHeight=245`; normal process check showed DynamicIsland at `0.5%` CPU.
+- Rollback: Restore the deleted Core files from git if Stats/Usage/TaskActivity is reselected as a shipped feature. Restore the removed NotchMetrics helpers only if new UI code starts using them again.
+
+### 2026-06-18 - compact-file-shelf-density-and-display-scaling-qa
+- Reason: User reported that File Shelf content did not display well inside the limited expanded island area and asked for better adaptation to Apple display scaling modes such as More Space.
+- Changed:
+  - `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: File Shelf now uses a compact unified adaptive grid instead of stacked category sections that wasted a full row per category. Tiles are `38pt` tall with `18pt` native file icons, middle-truncated file names, and category labels inside each tile. The filter bar and empty state are shorter, so the same expanded island area can show many more files at once. Regression checks now cover Apple More Space-style display signatures increasing open island width/height, and lock the existing `NSApplication.didChangeScreenParametersNotification` path that refreshes metrics and position after display scaling changes.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `git diff --check`; `./script/build_and_run.sh --verify`; debug visual screenshot `/tmp/dynamic-island-visual-audit/file-shelf-density-crop.png` with 10 visible preloaded files; `./script/build_and_run.sh`; normal process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.0%` CPU.
+- Rollback: Restore grouped `LazyVStack` sections and `52pt` file tiles only if category grouping is preferred over density. Remove the display scaling regression checks only if screen scaling adaptation is handled by a new explicit calibration flow.
+
+### 2026-06-18 - file-shelf-boundary-and-log-sanitization-fix
+- Reason: Visual QA of the rebuilt File Shelf overlay showed the leftmost filter chip and group title being clipped near the shell edge, and the file interaction log still exposed raw file names.
+- Changed:
+  - `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+  - `Sources/DynamicIsland/Support/IslandInteractionLogger.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: File Shelf overlay content now resolves `shellContentInset = max(expandedContentGuardInset, expandedHorizontalContentPadding)`, so header, filters, empty drop area, and grouped file body avoid rounded-shell clipping while never going below the 5pt guard. Drop boundary rectangles now use `strokeBorder` so their 1pt dashed border is drawn inside the guard. File drop/remove logs no longer write raw file names or display names, keeping extension, category, name length, and path fingerprint only.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `git diff --check`; debug visual screenshot `/tmp/dynamic-island-visual-audit/file-shelf-shell-crop-fixed.png`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.5%` CPU after debug launch.
+- Rollback: Restore `contentBoundaryInset` padding on File Shelf body/filter content only if the expanded shell layout changes enough that edge clipping is no longer possible. Restore raw `fileName` logging only if the privacy requirement is explicitly relaxed.
+
+### 2026-06-18 - rebuild-independent-file-shelf-overlay
+- Reason: User required the file shelf to be rebuilt as an independent temporary-file module instead of a patched expanded-content area, with a strict scope: file references only, no persistence, no copying, no extra permissions, category filtering, selection, drag-in, drag-out, overlay controls, and lifecycle cleanup.
+- Changed:
+  - `Sources/DynamicIslandCore/TemporaryFileShelf.swift`
+  - `Sources/DynamicIsland/Support/TemporaryFileShelfStore.swift`
+  - `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Core shelf logic now supports dedupe, expiry pruning, batch deletion, stable category grouping, and filter queries with no AppKit/SwiftUI imports. The UI layer uses an in-memory store only. File Shelf is now an independent overlay controlled by `isFileShelfOverlayVisible`, `isFileShelfPinnedOpen`, and `isFileDropTargetActive`; valid drops open and pin the overlay, Done closes without clearing, Clear deletes, empty shelves close the overlay, and a top-band `Files` button uses `IslandTopStatusBandLayout.fileShelfButtonFrame`. The overlay has filter chips, category groups, selection state, real file URL drag-out, 60-second expiry pruning, sanitized logs, and explicit debug-only preload via `ISLAND_DEBUG_FILE_SHELF_URLS` for cursor-free visual QA.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; debug visual screenshot `/tmp/dynamic-island-visual-audit/14-file-shelf-overlay-unobstructed-crop.png`; `./script/build_and_run.sh`; normal process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.0%` CPU.
+- Rollback: Revert the files above to the previous temporary shelf implementation if returning to a simple always-mounted expanded shelf. Remove `ISLAND_DEBUG_FILE_SHELF_URLS` if cursor-free visual QA preload is no longer needed.
+
+### 2026-06-18 - visual-qa-scroll-suppression-and-file-shelf-density
+- Reason: Visual QA found that an expanded shell could immediately consume a stale trackpad scroll event and collapse/hide. A later real expanded-state screenshot also showed the temporary file shelf header icon clipped at the left shell edge and the empty dashed drop panel stretching too heavily across the expanded shell.
+- Changed:
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Expanding the shell now resets the active scroll gesture and suppresses stale scroll events for `0.35s` before the unified `handleScroll` pipeline can lock to vertical or horizontal gestures. The file shelf now receives the full expanded shell width, applies `expandedContentGuardInset = 5pt` to the drop area, and applies `expandedHorizontalContentPadding` to the header so top-row UI avoids the rounded corner while still honoring the real 5pt boundary from the visible shell edge. The rejected ad-hoc `24pt` inset was removed. File tiles remain `150...210pt` wide with `52pt` rows and a compact `104pt` icon-only empty drop area. `ISLAND_DEBUG_EXPANDED_ON_LAUNCH=1` provides a cursor-free visual QA launch path.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; debug expanded screenshot `/tmp/dynamic-island-visual-audit/12-expanded-corner-aware-5pt-crop.png`; `./script/build_and_run.sh`; normal process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.0%` CPU.
+- Rollback: Remove `scrollSuppressionUntil` and `scrollSuppressionAfterExpansionDuration` from the controller if stale scroll suppression is no longer desired, remove `ISLAND_DEBUG_EXPANDED_ON_LAUNCH` if cursor-free expanded screenshots are no longer needed, and restore `TemporaryFileShelfView` grid/tile/inset sizes only if the shelf should return to dense full-height packing.
+
+### 2026-06-18 - default-file-drag-feedback-and-real-drag-validation
+- Reason: User asked to control the cursor and test file drag behavior directly, and wanted files dragged over the default closed island to show the same hover-like enlargement feedback.
+- Changed:
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Closed-state file drags are now accepted when the pointer is inside the visible `IslandShape` and the shell is not hidden. During a default-state file drag, `isFileDropTargeted` drives the same hover preview scale/shadow. Dropping a file on the closed shell adds it to the temporary shelf and expands the shell. AppKit drag locations now convert from window coordinates directly with `panel.convertPoint(toScreen:)`, avoiding the previous double conversion through `NSHostingView`. Dragging files out of the shelf now uses each file URL as a real `NSURL` pasteboard writer so Finder receives a real file transfer before the shelf removes successful drags.
+- Verify: Used real mouse events to drag `/tmp/dynamic-island-drag-test/island-drag-test.txt` from Finder to the default island. Logs showed `file.drop.targeted=true`, `shell.expanded=true`, and `file.drop.accepted count=1`. Then dragged the shelf item to `/tmp/dynamic-island-drop-target`; Finder received `island-drag-test.txt`, logs showed `file.drag.start` and `file.drag.completed succeeded=true`, and reopening the shell showed `Files 0`. Also ran `swift run DynamicIslandCoreChecks`, `swift build --product DynamicIsland`, and process CPU checks.
+- Rollback: Restore file drop gating to expanded-only, remove `state.isFileDropTargeted` from closed hover preview, revert drag-location conversion to the old hosting-view conversion only if AppKit dragging locations are deliberately changed to view coordinates, and replace `NSURL` drag writers only if Finder file export is no longer needed.
+
+### 2026-06-18 - file-shelf-multi-select-and-external-drag
+- Reason: User wanted the expanded temporary file shelf to support selecting multiple files, dragging them out together, and automatically removing them from the shelf after a successful external drop/copy/move.
+- Changed:
+  - `Sources/DynamicIslandCore/TemporaryFileShelf.swift`
+  - `Sources/DynamicIsland/Support/TemporaryFileShelfStore.swift`
+  - `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Shelf items now support single selection plus Shift/Command additive toggle selection. Dragging a selected file starts an AppKit `NSDraggingSource` session with one `NSDraggingItem` per selected file URL. If AppKit reports a non-empty drag operation on completion, the dragged items are removed from the temporary shelf and selection is retained only for remaining files; cancelled drags keep the files. Selection, drag start, and drag completion are recorded in the JSONL interaction log.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.2%` CPU.
+- Rollback: Remove `TemporaryFileDragSourceView` / `TemporaryFileDragSourceNSView`, remove selected item state and drag callbacks from `IslandOverlayView` and `IslandPanelController`, remove batch deletion from `TemporaryFileShelfStore`, and revert `TemporaryFileShelfSelection.toggle` plus related tests.
+
+### 2026-06-18 - interaction-jsonl-logging-and-self-test-mode
+- Reason: User could not inspect the UI remotely and requested self-checking plus accurate logs for startup and interactions so future issues can be diagnosed from event evidence.
+- Changed:
+  - `Sources/DynamicIsland/Support/IslandInteractionLogger.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `script/build_and_run.sh`
+  - `MEMORY.md`
+- Result: Each launch now creates a per-session JSONL file under `~/Library/Logs/DynamicIsland/` with local-time millisecond timestamps, session ID, process ID, launch mode, panel show/hide, shell expand/collapse, shell hide/show, scroll axis locks, music playback changes, committed music skips, debug music signals, and file shelf drop/remove/clear events. File drops log file name, extension, category, and a path fingerprint rather than a raw path. The build script now supports `--debug-music-signal`, passing `ISLAND_DEBUG_MUSIC_SIGNAL_FILE` through LaunchServices for repeatable music-state self-tests. Debug signal polling was relaxed from `80ms` to `160ms` to reduce unnecessary overhead.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; `./script/build_and_run.sh --debug-music-signal` plus `script/send_music_signal.sh`; `./script/build_and_run.sh`; normal app process check showed `0.0%` CPU.
+- Rollback: Remove `IslandInteractionLogger.swift`, strip `interactionLogger.log(...)` calls from the controller, remove `--debug-music-signal` from `script/build_and_run.sh`, and restore the old debug signal polling interval only if interaction logs or self-test launch mode are no longer wanted.
+
+### 2026-06-18 - expanded-temporary-file-shelf
+- Reason: User requested an expanded-state file drag/drop temporary storage feature and asked to research a good approach before implementing in phases.
+- Changed:
+  - `Sources/DynamicIsland/Support/TemporaryFileShelfStore.swift`
+  - `Sources/DynamicIsland/Views/IslandTrackingHostingView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Views/TemporaryFileShelfView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Reintroduced the file shelf as an expanded-only, in-memory feature. The AppKit hosting view registers for Finder `.fileURL` drags, the controller accepts drops only when the shell is expanded and the drop point is inside the visible `IslandShape`, and the expanded overlay shows a compact file shelf with native file icons, single-item removal, clear-all, and drag-target highlighting. No persistence is added.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; `./script/build_and_run.sh`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.2%` CPU.
+- Rollback: Remove `TemporaryFileShelfStore.swift` and `TemporaryFileShelfView.swift`, remove the drag destination callbacks from `IslandTrackingHostingView`, remove shelf callbacks/state from `IslandPanelController` and `IslandOverlayView`, and restore the removed-feature tests if the app should return to the music-only expanded shell.
+
+### 2026-06-18 - precise-shell-hit-testing-and-real-scroll-gesture-phases
+- Reason: User reported that global cursor detection near the Dynamic Island was not accurate enough and requested a follow-up optimization for realistic up/down and left/right trackpad gesture behavior.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandTrackingHostingView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Scroll and hover logic no longer uses the oversized transparent `panel.frame.contains(...)` region. The controller now derives the current visible shell frame in screen coordinates and checks the actual `IslandShape` path before accepting hover, hidden restore, vertical hide/show, or horizontal music skip gestures. The tracking view now forwards `NSEvent.phase` and `momentumPhase`, reports `mouseMoved`, and the controller uses phase-aware accumulation, ignores momentum as a new gesture source, and requires a deliberate `6pt` movement before axis lock/vertical activation.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; `./script/build_and_run.sh`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.0%` CPU.
+- Rollback: Restore `panel.frame.contains(NSEvent.mouseLocation)` checks and remove phase-aware scroll arguments if broader transparent-window hit detection is needed again.
+
+### 2026-06-18 - change-swipe-feedback-to-one-sided-edge-expansion
+- Reason: User clarified that horizontal swipe feedback should not be an icon sliding inside the fixed default shell width. Instead, right swipe should make the island's right edge expand with the next icon, and left swipe should make the left edge expand with the previous icon, while the default music width remains unchanged.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: The default music shell width still derives from `metrics.musicClosedShellWidth`, but skip feedback now adds a transient `musicSkipEdgeExpansion` up to `50pt`. The shell offsets by half that expansion so the opposite edge remains fixed: right swipe expands only the right side; left swipe expands only the left side. Existing album artwork and waveform positions remain visually stable during the one-sided expansion, and the skip glyph rides the newly expanded edge.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; debug music-signal screenshots captured under `/tmp/dynamic-island-frames/edge-expansion-v2/`, including `edge-expansion-contact-sheet.png`; normal app instance restored afterward.
+- Rollback: Remove `musicSkipEdgeExpansion`, `shellHorizontalOffset`, and `contentOriginShiftX` to return to fixed-width in-shell icon feedback.
+
+### 2026-06-18 - set-island-theme-black
+- Reason: User requested changing the project color to black.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Views/ClosedMusicWaveformView.swift`
+  - `Sources/DynamicIsland/Views/ClosedMusicAvatarView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: The Dynamic Island shell now uses a black fill. Music foreground elements that previously depended on the white shell now use white contrast: compact waveform bars, track info text, custom skip feedback glyph, and the fallback album placeholder. Real album artwork is unchanged.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; `./script/build_and_run.sh`; debug music-signal screenshots captured under `/tmp/dynamic-island-frames/black-theme/`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at `0.0%` CPU.
+- Rollback: Restore the shell fill to white and change the waveform, track text, skip glyph, and fallback artwork colors back to black if the white theme is preferred.
+
+### 2026-06-18 - debug-music-signal-swipe-frame-capture
+- Reason: User was away from the machine and requested a music signal sender plus detailed frame screenshots to inspect the in-shell left/right swipe animation without a real Music/Spotify session.
+- Changed:
+  - `Sources/DynamicIsland/Support/DebugMusicSignal.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `script/send_music_signal.sh`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Added an explicit `ISLAND_DEBUG_MUSIC_SIGNAL_FILE` JSON signal path for debug-only playback and skip feedback previews. The app polls this file only when the environment variable is present, and `script/send_music_signal.sh` can send `playing`, `idle`, `next <progress>`, `previous <progress>`, and `clear`. Replaced the feedback SF Symbol with a small in-app drawn skip glyph so screenshots show the icon reliably inside the clipped shell.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; debug launch with `ISLAND_DEBUG_MUSIC_SIGNAL_FILE=/tmp/dynamic-island-music-signal.json`; captured detailed frames under `/tmp/dynamic-island-frames/music-swipe/`, including `swipe-contact-sheet.png`.
+- Rollback: Remove `DebugMusicSignal.swift`, `script/send_music_signal.sh`, the debug polling branch, and the custom `MusicSkipGlyph` if debug preview signals are no longer needed.
+
+### 2026-06-18 - in-shell-horizontal-music-skip-feedback
+- Reason: User requested reintroducing default music-state left/right swipe skipping after committing the rollback, with the feedback icon inside the Dynamic Island shell instead of as an external popover or floating HUD.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandTrackingHostingView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Sources/DynamicIsland/Support/MusicPlaybackDataSource.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Scroll events again forward both axes. Default music state locks clear horizontal gestures, maps right swipe to next and left swipe to previous, drives icon feedback with `progress = min(abs(accumulatedDeltaX) / 50, 1)`, and keeps the icon inside the same clipped `IslandShape` content stack as the album artwork and waveform. Uncommitted gestures spring back; committed gestures execute AppleScript skip and fade the icon. Expanded state, hidden state, and track-info reveal do not handle horizontal skip.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product DynamicIsland`; `./script/build_and_run.sh --verify`; `./script/build_and_run.sh`; process check showed DynamicIsland running from `dist/Dynamic Island.app` at about `1.1%` CPU. Music was not running in this verification session, so live icon screenshots could not enter the default music state.
+- Rollback: Revert this event's five source/test files or return to commit `9c47b80` to remove horizontal music skipping.
+
 ### 2026-06-18 - rollback-horizontal-swipe-music-skip
 - Reason: User requested rolling back to the state before the left/right swipe recommendation and feature.
 - Changed:

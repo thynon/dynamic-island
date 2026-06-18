@@ -29,9 +29,9 @@ struct ClosedMusicAvatarView: View {
             let dot = min(proxy.size.width, proxy.size.height) * 0.35
             ZStack {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(Color.black)
-                Circle()
                     .fill(Color.white)
+                Circle()
+                    .fill(Color.black)
                     .frame(width: dot, height: dot)
             }
         }

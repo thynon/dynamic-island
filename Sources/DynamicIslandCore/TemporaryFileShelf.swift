@@ -22,6 +22,10 @@ public enum TemporaryShelfFileCategory: String, CaseIterable, Equatable, Hashabl
         }
     }
 
+    public static var displayOrder: [TemporaryShelfFileCategory] {
+        [.images, .documents, .spreadsheets, .presentations, .other]
+    }
+
     public static func from(fileExtension: String?) -> TemporaryShelfFileCategory {
         switch fileExtension?.lowercased() {
         case "png", "jpg", "jpeg", "heic", "gif", "webp", "svg":
@@ -35,6 +39,16 @@ public enum TemporaryShelfFileCategory: String, CaseIterable, Equatable, Hashabl
         default:
             .other
         }
+    }
+}
+
+public struct TemporaryFileShelfGroup: Equatable, Sendable {
+    public let category: TemporaryShelfFileCategory
+    public let items: [TemporaryShelfItem]
+
+    public init(category: TemporaryShelfFileCategory, items: [TemporaryShelfItem]) {
+        self.category = category
+        self.items = items
     }
 }
 
@@ -117,6 +131,14 @@ public struct TemporaryFileShelfSelection: Equatable, Sendable {
         selectedItemIDs = ids
     }
 
+    public mutating func toggle(_ id: TemporaryShelfItem.ID) {
+        if selectedItemIDs.contains(id) {
+            selectedItemIDs.remove(id)
+        } else {
+            selectedItemIDs.insert(id)
+        }
+    }
+
     public mutating func clear() {
         selectedItemIDs.removeAll()
     }
@@ -161,11 +183,29 @@ public struct TemporaryFileShelf: Equatable, Sendable {
         items.removeAll { $0.id == id }
     }
 
+    public mutating func removeItems(ids: Set<TemporaryShelfItem.ID>) {
+        guard !ids.isEmpty else { return }
+        items.removeAll { ids.contains($0.id) }
+    }
+
     public mutating func clear() {
         items.removeAll()
     }
 
     public mutating func pruneExpired(now: Date = Date()) {
         items.removeAll { $0.expiresAt <= now }
+    }
+
+    public func items(filteredBy filter: TemporaryFileShelfFilter) -> [TemporaryShelfItem] {
+        items.filter { filter.matches($0.category) }
+    }
+
+    public func groups(filteredBy filter: TemporaryFileShelfFilter) -> [TemporaryFileShelfGroup] {
+        TemporaryShelfFileCategory.displayOrder.compactMap { category in
+            guard filter.matches(category) else { return nil }
+            let categoryItems = items.filter { $0.category == category }
+            guard !categoryItems.isEmpty else { return nil }
+            return TemporaryFileShelfGroup(category: category, items: categoryItems)
+        }
     }
 }

@@ -21,7 +21,7 @@ final class WaveformBarsView: NSView {
     override init(frame frameRect: NSRect) {
         bars = (0..<barCount).map { _ in
             let layer = CALayer()
-            layer.backgroundColor = NSColor.black.cgColor
+            layer.backgroundColor = NSColor.white.cgColor
             layer.cornerRadius = 1.1
             return layer
         }

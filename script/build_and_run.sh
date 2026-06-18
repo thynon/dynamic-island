@@ -15,6 +15,7 @@ APP_MACOS="$APP_CONTENTS/MacOS"
 APP_BINARY="$APP_MACOS/$APP_PRODUCT_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 CODESIGN_IDENTITY="${DYNAMIC_ISLAND_CODESIGN_IDENTITY:-${ISLAND_CODESIGN_IDENTITY:-}}"
+DEBUG_MUSIC_SIGNAL_FILE="${ISLAND_DEBUG_MUSIC_SIGNAL_FILE:-/tmp/dynamic-island-music-signal.json}"
 
 if [[ -z "$CODESIGN_IDENTITY" ]]; then
   CODESIGN_IDENTITY="$(
@@ -71,6 +72,14 @@ open_app() {
   /usr/bin/open -n "$APP_BUNDLE"
 }
 
+open_debug_music_signal_app() {
+  mkdir -p "$(dirname "$DEBUG_MUSIC_SIGNAL_FILE")"
+  if [[ ! -f "$DEBUG_MUSIC_SIGNAL_FILE" ]]; then
+    printf '{"isPlaying":true,"title":"Debug Track","artist":"Signal Preview","direction":null,"progress":0}\n' >"$DEBUG_MUSIC_SIGNAL_FILE"
+  fi
+  /usr/bin/open -n "$APP_BUNDLE" --env ISLAND_DEBUG_MUSIC_SIGNAL_FILE="$DEBUG_MUSIC_SIGNAL_FILE"
+}
+
 case "$MODE" in
   run)
     open_app
@@ -82,6 +91,9 @@ case "$MODE" in
     open_app
     /usr/bin/log stream --info --style compact --predicate "process == \"$APP_PRODUCT_NAME\""
     ;;
+  --debug-music-signal|debug-music-signal)
+    open_debug_music_signal_app
+    ;;
   --telemetry|telemetry)
     open_app
     /usr/bin/log stream --info --style compact --predicate "subsystem == \"$BUNDLE_ID\""
@@ -92,7 +104,7 @@ case "$MODE" in
     pgrep -x "$APP_PRODUCT_NAME" >/dev/null
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2
+    echo "usage: $0 [run|--debug|--logs|--debug-music-signal|--telemetry|--verify]" >&2
     exit 2
     ;;
 esac

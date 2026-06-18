@@ -2,21 +2,16 @@ import AppKit
 import DynamicIslandCore
 
 enum ScreenMetricsProvider {
-    struct Result {
-        let metrics: NotchMetrics
-        let shouldShowCalibrationCaption: Bool
-    }
-
     static func metrics(for screen: NSScreen?) -> NotchMetrics {
-        profile(for: screen).metrics
+        profile(for: screen)
     }
 
     static func profile(
         for screen: NSScreen?,
         store: DisplayProfileStore = DisplayProfileStore()
-    ) -> Result {
+    ) -> NotchMetrics {
         guard let screen else {
-            return Result(metrics: .preview14Inch, shouldShowCalibrationCaption: false)
+            return .preview14Inch
         }
 
         let signature = DisplaySignature(
@@ -29,11 +24,11 @@ enum ScreenMetricsProvider {
         )
 
         if let cachedProfile = store.cachedProfile(matching: signature) {
-            return Result(metrics: cachedProfile.metrics, shouldShowCalibrationCaption: false)
+            return cachedProfile.metrics
         }
 
         let profile = DisplayProfile(signature: signature)
         store.save(profile)
-        return Result(metrics: profile.metrics, shouldShowCalibrationCaption: true)
+        return profile.metrics
     }
 }
