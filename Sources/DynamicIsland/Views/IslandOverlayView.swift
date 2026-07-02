@@ -517,8 +517,16 @@ private struct PrimaryFeatureSwitcher: View {
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, minHeight: 22)
                         .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(selection == feature ? .white.opacity(0.16) : .white.opacity(0.05))
+                            ZStack {
+                                if selection == feature {
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .fill(.white.opacity(0.16))
+                                        .matchedGeometryEffect(id: "selection", in: selectionNamespace)
+                                } else {
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .fill(.white.opacity(0.05))
+                                }
+                            }
                         )
                 }
                 .buttonStyle(PrimaryFeatureButtonStyle(animationProfile: animationProfile))
@@ -528,6 +536,13 @@ private struct PrimaryFeatureSwitcher: View {
             }
         }
         .foregroundStyle(.white)
+        .animation(
+            .spring(
+                response: animationProfile.primaryFeatureSelectionResponse,
+                dampingFraction: animationProfile.primaryFeatureSelectionDamping
+            ),
+            value: selection
+        )
     }
 }
 
