@@ -242,13 +242,14 @@ struct IslandOverlayView: View {
         ZStack(alignment: .topLeading) {
             shellFillColor
 
-            PrimaryFeatureSwitcher(selection: $state.selectedPrimaryFeature)
+            PrimaryFeatureSwitcher(
+                selection: $state.selectedPrimaryFeature,
+                isExpanded: isExpanded,
+                animationProfile: animationProfile
+            )
                 .frame(width: primaryNavigationFrame.width, height: primaryNavigationFrame.height)
                 .position(x: primaryNavigationFrame.midX, y: primaryNavigationFrame.midY)
-                .offset(y: isExpanded ? 0 : -primaryFeatureEntranceOffsetY)
-                .opacity(isExpanded ? 1 : 0)
                 .allowsHitTesting(isExpanded)
-                .animation(primaryFeatureEntranceAnimation, value: isExpanded)
                 .zIndex(4)
 
             if isExpanded, state.temporaryFileShelf.hasItems {
@@ -484,10 +485,30 @@ private struct CalibrationOverlayView: View {
 
 private struct PrimaryFeatureSwitcher: View {
     @Binding var selection: IslandPrimaryFeature
+    let isExpanded: Bool
+    let animationProfile: IslandAnimationProfile
+
+    @Namespace private var selectionNamespace
+
+    private func featureEntranceAnimation(index: Int) -> Animation {
+        guard isExpanded else {
+            return .easeOut(duration: animationProfile.attachedElementCollapseDuration)
+        }
+
+        let baseAnimation = Animation.spring(
+            response: animationProfile.primaryFeatureEntranceResponse,
+            dampingFraction: animationProfile.primaryFeatureEntranceDampingFraction,
+            blendDuration: animationProfile.primaryFeatureEntranceBlendDuration
+        )
+
+        let staggerDelay = animationProfile.primaryFeatureEntranceStartDelay + (Double(index) * animationProfile.primaryFeatureStaggerDelay)
+
+        return baseAnimation.delay(staggerDelay)
+    }
 
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(IslandPrimaryFeature.allCases) { feature in
+            ForEach(Array(IslandPrimaryFeature.allCases.enumerated()), id: \.element.id) { index, feature in
                 Button {
                     selection = feature
                 } label: {
@@ -500,7 +521,10 @@ private struct PrimaryFeatureSwitcher: View {
                                 .fill(selection == feature ? .white.opacity(0.16) : .white.opacity(0.05))
                         )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PrimaryFeatureButtonStyle(animationProfile: animationProfile))
+                .offset(y: isExpanded ? 0 : -animationProfile.primaryFeatureButtonSlideDistance)
+                .opacity(isExpanded ? 1 : 0)
+                .animation(featureEntranceAnimation(index: index), value: isExpanded)
             }
         }
         .foregroundStyle(.white)
