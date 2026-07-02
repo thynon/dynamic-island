@@ -39,6 +39,15 @@ private func source(_ path: String) -> String {
     (try? String(contentsOf: projectRoot().appendingPathComponent(path), encoding: .utf8)) ?? ""
 }
 
+private func islandOverlaySources() -> String {
+    [
+        "Sources/DynamicIsland/Views/IslandOverlayView.swift",
+        "Sources/DynamicIsland/Views/IslandOverlayState.swift",
+        "Sources/DynamicIsland/Views/IslandPrimaryFeature.swift",
+        "Sources/DynamicIsland/Views/FileShelfActions.swift"
+    ].map(source).joined(separator: "\n")
+}
+
 private func testDerivesApprovedFourteenInchNotchMetrics() {
     let metrics = NotchMetrics.fromDisplay(
         frameWidth: 1512,
@@ -87,8 +96,8 @@ private func testDerivesApprovedFourteenInchNotchMetrics() {
         true,
         "right music accessory keeps a guard from the closed shell curved edge"
     )
-    expectEqual(metrics.openWidth, 650, "open width")
-    expectEqual(metrics.openHeight, 230, "open height")
+    expectEqual(metrics.openWidth, 850, "open width")
+    expectEqual(metrics.openHeight, 200, "open height")
 }
 
 private func testTopStatusBandUsesFivePointBoundary() {
@@ -178,8 +187,8 @@ private func testDisplayProfileDerivesMetricsFromScreenSignature() {
     expectEqual(profile.displayKind, .notchedCompact, "fourteen-inch style display uses compact notched profile")
     expectEqual(profile.metrics.cameraHousingWidth, 185, "display profile derives camera housing width")
     expectEqual(profile.metrics.closedShellWidth, 260, "display profile derives closed shell width")
-    expectEqual(profile.metrics.openWidth, 650, "display profile derives open shell width")
-    expectEqual(profile.metrics.openHeight, 230, "display profile derives open shell height")
+    expectEqual(profile.metrics.openWidth, 850, "display profile derives open shell width")
+    expectEqual(profile.metrics.openHeight, 200, "display profile derives open shell height")
     expectEqual(profile.matches(signature), true, "display profile matches the same signature")
 
     let moreSpaceSignature = DisplaySignature(
@@ -192,8 +201,8 @@ private func testDisplayProfileDerivesMetricsFromScreenSignature() {
     )
     let moreSpaceProfile = DisplayProfile(signature: moreSpaceSignature, measuredAt: Date(timeIntervalSince1970: 0))
     expectEqual(moreSpaceProfile.displayKind, .notchedLarge, "Apple more-space scaling uses the larger notched profile")
-    expectEqual(moreSpaceProfile.metrics.openWidth > profile.metrics.openWidth, true, "more-space scaling gives the island more horizontal room")
-    expectEqual(moreSpaceProfile.metrics.openHeight > profile.metrics.openHeight, true, "more-space scaling gives the island more vertical room")
+    expectEqual(moreSpaceProfile.metrics.openWidth, 850, "more-space scaling uses the requested expanded width")
+    expectEqual(moreSpaceProfile.metrics.openHeight, 200, "more-space scaling uses the requested expanded height")
     expectEqual(moreSpaceProfile.matches(moreSpaceSignature), true, "more-space profile is cached by its exact display signature")
 }
 
@@ -209,8 +218,8 @@ private func testReleaseDisplayAdaptationMatrixAndLeanContracts() {
     let compactAirProfile = DisplayProfile(signature: compactAirSignature, measuredAt: Date(timeIntervalSince1970: 0))
     expectEqual(compactAirProfile.displayKind, .notchedCompact, "13/15-inch Air style notch uses compact profile")
     expectEqual(compactAirProfile.metrics.cameraHousingWidth, 185, "compact notched displays preserve camera housing width")
-    expectEqual(compactAirProfile.metrics.openWidth, 650, "compact notched displays keep the baseline expanded width")
-    expectEqual(compactAirProfile.metrics.openHeight, 230, "compact notched displays keep the baseline expanded height")
+    expectEqual(compactAirProfile.metrics.openWidth, 850, "compact notched displays use the requested expanded width")
+    expectEqual(compactAirProfile.metrics.openHeight, 200, "compact notched displays use the requested expanded height")
 
     let sixteenInchSignature = DisplaySignature(
         frameWidth: 1728,
@@ -223,8 +232,8 @@ private func testReleaseDisplayAdaptationMatrixAndLeanContracts() {
     let sixteenInchProfile = DisplayProfile(signature: sixteenInchSignature, measuredAt: Date(timeIntervalSince1970: 0))
     expectEqual(sixteenInchProfile.displayKind, .notchedLarge, "16-inch notch uses the larger notched profile")
     expectEqual(sixteenInchProfile.metrics.cameraHousingWidth, 185, "16-inch notch preserves the camera housing width")
-    expectEqual(sixteenInchProfile.metrics.openWidth, 728, "16-inch notch gets a wider expanded island")
-    expectEqual(sixteenInchProfile.metrics.openHeight, 235, "16-inch notch gets a taller expanded island")
+    expectEqual(sixteenInchProfile.metrics.openWidth, 850, "16-inch notch uses the requested expanded width")
+    expectEqual(sixteenInchProfile.metrics.openHeight, 200, "16-inch notch uses the requested expanded height")
 
     let standardDisplaySignature = DisplaySignature(
         frameWidth: 1440,
@@ -250,6 +259,9 @@ private func testReleaseDisplayAdaptationMatrixAndLeanContracts() {
     expectEqual(notchMetrics.contains("closedWindowSize"), false, "release metrics remove unused closed window size helper")
     expectEqual(notchMetrics.contains("openWindowSize"), false, "release metrics remove unused open window size helper")
     expectEqual(screenMetricsProvider.contains("shouldShowCalibrationCaption"), false, "screen metrics provider does not keep unused calibration caption state")
+    expectEqual(screenMetricsProvider.contains("let freshProfile = DisplayProfile(signature: signature)"), true, "screen metrics provider derives a fresh profile for cache compatibility checks")
+    expectEqual(screenMetricsProvider.contains("cachedProfile.metrics == freshProfile.metrics"), true, "screen metrics provider invalidates cached display profiles when sizing policy changes")
+    expectEqual(screenMetricsProvider.contains("store.save(freshProfile)"), true, "screen metrics provider refreshes stale cached display profiles")
     expectEqual(displayProfileStore.contains("currentProfile()"), false, "display profile store does not keep unused profile reader API")
 }
 
@@ -316,10 +328,10 @@ private func testTemporaryFileShelfCoreModel() {
 }
 
 private func testTemporaryFileShelfExpandedDropIntegration() {
-    let overlay = source("Sources/DynamicIsland/Views/IslandOverlayView.swift")
+    let overlay = islandOverlaySources()
     let controller = source("Sources/DynamicIsland/Controllers/IslandPanelController.swift")
     let trackingView = source("Sources/DynamicIsland/Views/IslandTrackingHostingView.swift")
-    let shelfView = source("Sources/DynamicIsland/Views/TemporaryFileShelfView.swift")
+    let shelfView = source("Sources/DynamicIsland/Views/FileShelfOverlayView.swift")
     let shelfStore = source("Sources/DynamicIsland/Support/TemporaryFileShelfStore.swift")
     let topBandLayout = source("Sources/DynamicIslandCore/IslandTopStatusBandLayout.swift")
 
@@ -387,6 +399,25 @@ private func testTemporaryFileShelfExpandedDropIntegration() {
     expectEqual(topBandLayout.contains("primaryNavigationFrame"), true, "top status band exposes a frame for the primary feature switcher")
     expectEqual(topBandLayout.contains("rightInfoRegion.maxX - resolvedWidth"), true, "primary feature switcher is anchored in the blue right safe region")
     expectEqual(overlay.contains("PrimaryFeatureSwitcher"), true, "expanded overlay renders the primary feature switcher")
+    expectEqual(overlay.contains("private var primaryFeatureEntranceLayer: some View"), false, "primary feature switcher stays inside the shell instead of using an external stable layer")
+    expectEqual(overlay.contains("private var primaryFeatureEntranceClipShape: IslandShape"), false, "primary feature switcher does not keep the reverted external clipping shape")
+    expectEqual(overlay.contains("PrimaryFeatureSwitcher(selection: $state.selectedPrimaryFeature)"), true, "primary feature switcher stays a pure button group")
+    expectEqual(overlay.contains("ForEach(IslandPrimaryFeature.allCases)"), true, "primary feature switcher renders features in stable enum order")
+    expectEqual(overlay.contains("private var primaryFeatureEntranceOffsetY: CGFloat"), true, "primary feature group owns a whole-group vertical entrance offset")
+    expectEqual(overlay.contains("primaryNavigationFrame.height + metrics.openTopCornerRadius"), true, "primary feature group starts from a top-side path")
+    expectEqual(overlay.contains(".offset(y: isExpanded ? 0 : -primaryFeatureEntranceOffsetY)"), true, "primary feature group moves as one unit from top to bottom")
+    expectEqual(overlay.contains(".offset(x: isExpanded ? 0 : -primaryFeatureEntranceOffset)"), false, "primary feature group no longer enters from the left")
+    expectEqual(overlay.contains(".opacity(isExpanded ? 1 : 0)"), true, "primary feature group fades as one unit")
+    expectEqual(overlay.contains(".animation(featureEntranceAnimation(index: index), value: isExpanded)"), true, "primary feature buttons use per-button staggered entrance animation")
+    expectEqual(overlay.contains("featureFadeAnimation(index:"), false, "primary feature buttons do not stagger internally")
+    expectEqual(overlay.contains("primaryFeatureFadeStaggerDelay"), false, "primary feature animation does not keep per-button stagger timing")
+    expectEqual(overlay.contains("Animation.spring("), true, "primary feature entrance uses a spring for subtle rebound")
+    expectEqual(overlay.contains("animationProfile.primaryFeatureEntranceResponse"), true, "primary feature spring response comes from the shared animation profile")
+    expectEqual(overlay.contains("animationProfile.primaryFeatureEntranceDampingFraction"), true, "primary feature damping comes from the shared animation profile")
+    expectEqual(overlay.contains("animationProfile.primaryFeatureEntranceBlendDuration"), true, "primary feature spring blend duration comes from the shared animation profile")
+    expectEqual(overlay.contains("animationProfile.primaryFeatureEntranceDuration"), false, "primary feature entrance no longer uses a plain duration-only ease")
+    expectEqual(overlay.contains("animationProfile.primaryFeatureEntranceStartDelay"), true, "primary feature entrance delay comes from the shared animation profile")
+    expectEqual(IslandAnimationProfile.default.primaryFeatureEntranceStartDelay >= IslandAnimationProfile.default.expandResponse * 0.85, true, "primary feature entrance waits until horizontal shell expansion is visually stable")
     expectEqual(overlay.contains("primaryNavigationFrame"), true, "primary feature switcher uses the top status band layout")
     expectEqual(overlay.contains("Tasks"), true, "primary feature switcher includes Tasks")
     expectEqual(overlay.contains("Data"), true, "primary feature switcher includes Data")
@@ -396,11 +427,11 @@ private func testTemporaryFileShelfExpandedDropIntegration() {
     expectEqual(overlay.contains("contentBoundaryInset: metrics.expandedContentGuardInset"), true, "expanded temporary shelf receives the canonical 5pt boundary from NotchMetrics")
     expectEqual(overlay.contains("topBoundaryInset: metrics.expandedHorizontalContentPadding"), true, "expanded temporary shelf header receives the corner-aware top boundary from NotchMetrics")
     expectEqual(overlay.contains(".position(x: metrics.openWidth / 2, y: expandedTemporaryShelfCenterY)"), true, "expanded temporary shelf stays centered inside the shell before applying its internal 5pt boundary")
-    expectEqual(overlay.contains("onRemoveTemporaryFile"), true, "expanded overlay can remove one temporary file")
-    expectEqual(overlay.contains("onClearTemporaryFiles"), true, "expanded overlay can clear temporary files")
-    expectEqual(overlay.contains("onSelectTemporaryFile"), true, "expanded overlay can select temporary files")
-    expectEqual(overlay.contains("onSelectTemporaryFiles"), true, "expanded overlay can select several temporary files from rectangle selection")
-    expectEqual(overlay.contains("onCompleteTemporaryFileDrag"), true, "expanded overlay can complete an external file drag")
+    expectEqual(overlay.contains("onRemoveItem"), true, "expanded overlay can remove one temporary file")
+    expectEqual(overlay.contains("onClearItems"), true, "expanded overlay can clear temporary files")
+    expectEqual(overlay.contains("onSelectItem"), true, "expanded overlay can select temporary files")
+    expectEqual(overlay.contains("onSelectItems"), true, "expanded overlay can select several temporary files from rectangle selection")
+    expectEqual(overlay.contains("onDragCompleted"), true, "expanded overlay can complete an external file drag")
 
     expectEqual(shelfView.contains("struct FileShelfOverlayView"), true, "temporary file shelf view is implemented as an independent overlay view")
     expectEqual(shelfView.contains("TemporaryFileShelf"), true, "temporary file shelf view receives the core shelf model")
@@ -504,7 +535,7 @@ private func testInteractionLoggingContract() {
 }
 
 private func testCurrentShellSourceContracts() {
-    let overlay = source("Sources/DynamicIsland/Views/IslandOverlayView.swift")
+    let overlay = islandOverlaySources()
     let controller = source("Sources/DynamicIsland/Controllers/IslandPanelController.swift")
     let metrics = source("Sources/DynamicIslandCore/NotchMetrics.swift")
     let appDelegate = source("Sources/DynamicIsland/Controllers/AppDelegate.swift")
@@ -713,18 +744,21 @@ private func testCurrentShellSourceContracts() {
     expectEqual(controller.contains("momentumPhase.isEmpty"), true, "trackpad momentum events do not start new gestures")
     expectEqual(controller.contains("guard pointerInsideIsland else"), true, "scroll gestures outside the island tracking zone are ignored")
     expectEqual(controller.contains("if overlayState.isShellHidden"), true, "hidden state has first priority in scroll handling")
+    expectEqual(controller.contains("private var canHandleVerticalHideShow"), true, "controller has a dedicated gate for vertical hide/show gestures")
+    expectEqual(controller.contains("!isExpanded\n            && !overlayState.isShellHidden"), true, "expanded shell does not support upward hide or downward expand gestures")
+    expectEqual(controller.contains("guard canHandleVerticalHideShow else {\n            resetScrollGesture(shouldCommitPendingSkip: false)\n            return\n        }"), true, "visible vertical gestures are ignored while expanded")
     expectEqual(controller.contains("let activationThreshold = scaledGestureThreshold(Self.scrollActivationThreshold)"), true, "natural trackpad vertical gestures use runtime sensitivity")
     expectEqual(controller.contains("accumulatedScrollDeltaY < -activationThreshold"), true, "natural trackpad upward scroll hides the shell with a short gesture")
     expectEqual(controller.contains("accumulatedScrollDeltaY > activationThreshold"), true, "natural trackpad downward scroll restores the hidden shell")
     expectEqual(skipGestureMachine.contains("accumulatedDeltaX < 0 ? .previous : .next"), true, "horizontal skip direction follows the user's natural trackpad direction")
     expectEqual(skipGestureMachine.contains("accumulatedDeltaX < 0 ? .next : .previous"), false, "horizontal skip direction is no longer reversed")
     expectEqual(skipGestureMachine.contains("lockedDirection"), true, "state machine keeps reverse movement from flipping to the opposite icon")
-    expectEqual(skipGestureMachine.contains("case cancelled(direction: IslandMusicSkipDirection)"), true, "state machine has a terminal cancelled state for the current gesture")
-    expectEqual(skipGestureMachine.contains("case committed(direction: IslandMusicSkipDirection)"), true, "state machine has an explicit committed state")
+    expectEqual(skipGestureMachine.contains("case cancelled(direction: MusicSkipDirection)"), true, "state machine has a terminal cancelled state for the current gesture")
+    expectEqual(skipGestureMachine.contains("case committed(direction: MusicSkipDirection)"), true, "state machine has an explicit committed state")
     expectEqual(controller.contains("applyHorizontalMusicSkipGestureState"), true, "controller applies state-machine output to overlay feedback")
     expectEqual(controller.contains("pendingHorizontalSkipDirection != direction"), false, "rollback cancellation does not switch to the opposite skip direction")
     expectEqual(controller.contains("guard progress >= 1, !hasTriggeredHorizontalSkip else { return }"), false, "horizontal skip no longer commits immediately while the user may still cancel")
-    expectEqual(controller.contains("performMusicSkip(musicDirection)"), true, "panel commits horizontal music skip")
+    expectEqual(controller.contains("performMusicSkip(direction)"), true, "panel commits horizontal music skip")
     expectEqual(controller.contains("setShellHidden(false)"), true, "natural trackpad downward scroll restores the hidden shell")
     expectEqual(controller.contains("syncHoverWithPointer()"), true, "restored shell immediately reflects hover using the accurate shell hit test")
     expectEqual(overlay.contains("!state.isShellHidden"), true, "hidden shell does not reveal hover or accept expansion taps")
@@ -740,8 +774,8 @@ private func testCurrentShellSourceContracts() {
     expectEqual(topBandLayout.contains("statusDotFrame"), false, "top band layout no longer exposes removed status dot frames")
     expectEqual(topBandLayout.contains("audioWaveformFrame"), false, "top band layout no longer exposes removed audio waveform frames")
     expectEqual(topBandLayout.contains("costBadgeFrame"), false, "top band layout no longer exposes removed usage badge frames")
-    expectEqual(controller.contains("metrics.musicClosedShellWidth + Self.closedCanvasHorizontalSlack"), true, "closed canvas keeps horizontal room for hover and one-sided skip expansion")
-    expectEqual(controller.contains("(showsTrackInfo ? metrics.musicTrackInfoShellHeight : metrics.closedHeight) + Self.closedHoverBottomSlack"), true, "closed canvas expands only while track info is visible")
+    expectEqual(controller.contains("metrics.musicClosedShellWidth + NotchMetrics.closedCanvasHorizontalSlack"), true, "closed canvas keeps horizontal room for hover and one-sided skip expansion")
+    expectEqual(controller.contains("(showsTrackInfo ? metrics.musicTrackInfoShellHeight : metrics.closedHeight) + NotchMetrics.closedHoverBottomSlack"), true, "closed canvas expands only while track info is visible")
     expectEqual(controller.contains("startMusicPlaybackPolling"), true, "panel polls supported music players for compact accessories")
     expectEqual(controller.contains("runtimeSettings.isMusicModeEnabled"), true, "controller gates music mode through runtime settings")
     expectEqual(controller.contains("runtimeSettings.isFileShelfEnabled"), true, "controller gates file shelf through runtime settings")
@@ -771,13 +805,19 @@ private func testCurrentShellSourceContracts() {
     expectEqual(controller.contains("ISLAND_DEBUG_EXPANDED_ON_LAUNCH"), true, "debug visual QA can launch directly into the expanded shell without cursor control")
     expectEqual(controller.contains("ISLAND_DEBUG_FILE_SHELF_URLS"), true, "debug visual QA can launch with visible file shelf contents")
     expectEqual(controller.contains("ISLAND_DEBUG_CALIBRATION"), true, "debug calibration requires an explicit environment variable")
+    expectEqual(controller.contains("ISLAND_DEBUG_PRIMARY_FEATURE_FRAME_CAPTURE_DIR"), true, "debug visual QA can export primary feature opening frames explicitly")
+    expectEqual(controller.contains("startDebugPrimaryFeatureFrameCaptureIfNeeded"), true, "primary feature frame capture is isolated behind an explicit debug path")
+    expectEqual(controller.contains("captureDebugPrimaryFeatureFrame"), true, "primary feature visual QA captures the actual hosting view")
+    expectEqual(controller.contains("cacheDisplay(in: bounds, to: bitmap)"), true, "primary feature visual QA renders frames from the app view instead of relying on screen recording")
+    expectEqual(controller.contains("frame-%03d.png"), true, "primary feature visual QA writes ordered PNG frames")
     expectEqual(controller.contains("shouldShowCalibrationOverlay"), true, "debug calibration launch is isolated behind an explicit environment check")
     expectEqual(controller.contains("runtimeSettings.isCalibrationModeEnabled = Self.shouldShowCalibrationOverlay"), true, "debug calibration launch seeds runtime calibration mode")
     expectEqual(controller.contains("overlayState.isCalibrationOverlayVisible = runtimeSettings.isCalibrationModeEnabled"), true, "panel exposes initial calibration mode through the runtime setting")
     expectEqual(controller.contains("overlayState.calibrationHasCameraHousing"), true, "panel passes physical camera housing detection to calibration overlay")
     expectEqual(controller.contains("shouldStartExpandedForDebug"), true, "debug expanded launch is isolated behind an explicit environment check")
     expectEqual(controller.contains("160_000_000"), true, "debug music signal polling uses a conservative low-overhead interval")
-    expectEqual(musicSource.contains("enum MusicSkipDirection"), true, "music source models previous and next skip directions")
+    expectEqual(skipGestureMachine.contains("enum MusicSkipDirection"), true, "core models previous and next skip directions")
+    expectEqual(musicSource.contains("import DynamicIslandCore"), true, "music source uses the core skip direction model")
     expectEqual(musicSource.contains("func skipTrack(_ direction: MusicSkipDirection) async -> Bool"), true, "music source performs skip commands")
     expectEqual(musicSource.contains("next track"), true, "music source sends next-track AppleScript")
     expectEqual(musicSource.contains("previous track"), true, "music source sends previous-track AppleScript")
@@ -786,7 +826,7 @@ private func testCurrentShellSourceContracts() {
     expectEqual(musicSignalScript.contains("ISLAND_DEBUG_MUSIC_SIGNAL_FILE"), true, "debug music signal sender targets the explicit signal file")
     expectEqual(buildScript.contains("--debug-calibration"), true, "build script can launch the hidden calibration overlay")
     expectEqual(buildScript.contains("--env ISLAND_DEBUG_CALIBRATION=1"), true, "debug calibration mode passes the explicit environment flag")
-    expectEqual(controller.contains("ScreenMetricsProvider.profile"), true, "panel keeps display-aware shell sizing")
+    expectEqual(controller.contains("ScreenMetricsProvider.metrics(for:"), true, "panel keeps display-aware shell sizing")
     expectEqual(appDelegate.contains("Show Dynamic Island"), true, "status menu can show the shell")
     expectEqual(appDelegate.contains("Hide Dynamic Island"), true, "status menu can hide the shell")
     expectEqual(appDelegate.contains("Quit Dynamic Island"), true, "status menu can quit the app")
