@@ -2,69 +2,13 @@ import AppKit
 import SwiftUI
 import DynamicIslandCore
 
-enum IslandPrimaryFeature: String, CaseIterable, Equatable, Identifiable {
-    case tasks
-    case data
-    case tools
-    case settings
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .tasks:
-            "Tasks"
-        case .data:
-            "Data"
-        case .tools:
-            "Tools"
-        case .settings:
-            "Settings"
-        }
-    }
-}
-
-@MainActor
-final class IslandOverlayState: ObservableObject {
-    @Published var isExpanded = false
-    @Published var usesOpenCanvas = false
-    @Published var isShellHidden = false
-    @Published var isHovered = false
-    @Published var isTrackInfoPresented = false
-    @Published var musicSkipFeedbackDirection: MusicSkipDirection?
-    @Published var musicSkipGestureProgress: CGFloat = 0
-    @Published var isMusicSkipArmed = false
-    @Published var isCalibrationOverlayVisible = false
-    @Published var calibrationHasCameraHousing = false
-    @Published var musicPlayback: MusicPlaybackSnapshot = .idle
-    @Published var temporaryFileShelf = TemporaryFileShelf()
-    @Published var temporaryFileShelfSelectedItemIDs: Set<TemporaryShelfItem.ID> = []
-    @Published var temporaryFileShelfFilter: TemporaryFileShelfFilter = .all
-    @Published var isFileShelfOverlayVisible = false
-    @Published var isFileShelfPinnedOpen = false
-    @Published var isFileDropTargetActive = false
-    @Published var selectedPrimaryFeature: IslandPrimaryFeature = .tasks
-}
-
 struct IslandOverlayView: View {
     let metrics: NotchMetrics
     @ObservedObject var state: IslandOverlayState
     let onExpansionChange: @MainActor (Bool) -> Void
-    let onSelectTemporaryFile: @MainActor (TemporaryShelfItem.ID, Bool) -> Void
-    let onSelectTemporaryFiles: @MainActor ([TemporaryShelfItem.ID], Bool) -> Void
-    let onRemoveTemporaryFile: @MainActor (TemporaryShelfItem.ID) -> Void
-    let onClearTemporaryFiles: @MainActor () -> Void
-    let onStartTemporaryFileDrag: @MainActor ([TemporaryShelfItem.ID]) -> Void
-    let onCompleteTemporaryFileDrag: @MainActor ([TemporaryShelfItem.ID], Bool) -> Void
-    let onChangeTemporaryFileFilter: @MainActor (TemporaryFileShelfFilter) -> Void
-    let onClearTemporaryFileSelection: @MainActor () -> Void
-    let onToggleFileShelfOverlay: @MainActor () -> Void
-    let onDoneFileShelfOverlay: @MainActor () -> Void
+    let fileShelfActions: FileShelfActions
 
     private let animationProfile = IslandAnimationProfile.default
-    private let closedHoverHorizontalSlack: CGFloat = 22
-    private let closedHoverBottomSlack: CGFloat = 10
-    private let musicSkipEdgeExpansionMax: CGFloat = 50
     private let musicSkipIconSize: CGFloat = 18
     private let trackInfoTextCenterY: CGFloat = 55
 
@@ -72,30 +16,12 @@ struct IslandOverlayView: View {
         metrics: NotchMetrics,
         state: IslandOverlayState,
         onExpansionChange: @escaping @MainActor (Bool) -> Void = { _ in },
-        onSelectTemporaryFile: @escaping @MainActor (TemporaryShelfItem.ID, Bool) -> Void = { _, _ in },
-        onSelectTemporaryFiles: @escaping @MainActor ([TemporaryShelfItem.ID], Bool) -> Void = { _, _ in },
-        onRemoveTemporaryFile: @escaping @MainActor (TemporaryShelfItem.ID) -> Void = { _ in },
-        onClearTemporaryFiles: @escaping @MainActor () -> Void = {},
-        onStartTemporaryFileDrag: @escaping @MainActor ([TemporaryShelfItem.ID]) -> Void = { _ in },
-        onCompleteTemporaryFileDrag: @escaping @MainActor ([TemporaryShelfItem.ID], Bool) -> Void = { _, _ in },
-        onChangeTemporaryFileFilter: @escaping @MainActor (TemporaryFileShelfFilter) -> Void = { _ in },
-        onClearTemporaryFileSelection: @escaping @MainActor () -> Void = {},
-        onToggleFileShelfOverlay: @escaping @MainActor () -> Void = {},
-        onDoneFileShelfOverlay: @escaping @MainActor () -> Void = {}
+        fileShelfActions: FileShelfActions = FileShelfActions()
     ) {
         self.metrics = metrics
         self.state = state
         self.onExpansionChange = onExpansionChange
-        self.onSelectTemporaryFile = onSelectTemporaryFile
-        self.onSelectTemporaryFiles = onSelectTemporaryFiles
-        self.onRemoveTemporaryFile = onRemoveTemporaryFile
-        self.onClearTemporaryFiles = onClearTemporaryFiles
-        self.onStartTemporaryFileDrag = onStartTemporaryFileDrag
-        self.onCompleteTemporaryFileDrag = onCompleteTemporaryFileDrag
-        self.onChangeTemporaryFileFilter = onChangeTemporaryFileFilter
-        self.onClearTemporaryFileSelection = onClearTemporaryFileSelection
-        self.onToggleFileShelfOverlay = onToggleFileShelfOverlay
-        self.onDoneFileShelfOverlay = onDoneFileShelfOverlay
+        self.fileShelfActions = fileShelfActions
     }
 
     private var isExpanded: Bool {
@@ -111,7 +37,7 @@ struct IslandOverlayView: View {
     }
 
     private var closedCanvasHorizontalSlack: CGFloat {
-        max(closedHoverHorizontalSlack, musicSkipEdgeExpansionMax * 2)
+        NotchMetrics.closedCanvasHorizontalSlack
     }
 
     private var shellHeight: CGFloat {
@@ -129,7 +55,7 @@ struct IslandOverlayView: View {
     }
 
     private var canvasHeight: CGFloat {
-        state.usesOpenCanvas ? metrics.openCanvasWindowSize.height : metrics.musicTrackInfoShellHeight + closedHoverBottomSlack
+        state.usesOpenCanvas ? metrics.openCanvasWindowSize.height : metrics.musicTrackInfoShellHeight + NotchMetrics.closedHoverBottomSlack
     }
 
     private var showsHoverPreview: Bool {
@@ -160,7 +86,7 @@ struct IslandOverlayView: View {
     }
 
     private var musicSkipEdgeExpansion: CGFloat {
-        musicSkipEdgeExpansionMax * musicSkipProgress
+        NotchMetrics.musicSkipEdgeExpansionMax * musicSkipProgress
     }
 
     private var shellHorizontalScale: CGFloat {
@@ -273,6 +199,10 @@ struct IslandOverlayView: View {
         metrics.expandedTopStatusBandLayout.primaryNavigationFrame(width: 168, height: 22)
     }
 
+    private var primaryFeatureEntranceOffsetY: CGFloat {
+        primaryNavigationFrame.height + metrics.openTopCornerRadius
+    }
+
     private var expandAnimation: Animation {
         .interactiveSpring(
             response: animationProfile.expandResponse,
@@ -285,6 +215,24 @@ struct IslandOverlayView: View {
         .easeOut(duration: animationProfile.collapseDuration)
     }
 
+    private var primaryFeatureEntranceAnimation: Animation {
+        guard isExpanded else {
+            return .easeOut(duration: animationProfile.attachedElementCollapseDuration)
+        }
+
+        let animation = Animation.spring(
+            response: animationProfile.primaryFeatureEntranceResponse,
+            dampingFraction: animationProfile.primaryFeatureEntranceDampingFraction,
+            blendDuration: animationProfile.primaryFeatureEntranceBlendDuration
+        )
+
+        guard animationProfile.primaryFeatureEntranceStartDelay > 0 else {
+            return animation
+        }
+
+        return animation.delay(animationProfile.primaryFeatureEntranceStartDelay)
+    }
+
     var body: some View {
         islandShell
             .frame(width: canvasWidth, height: canvasHeight, alignment: .top)
@@ -294,21 +242,24 @@ struct IslandOverlayView: View {
         ZStack(alignment: .topLeading) {
             shellFillColor
 
-            if isExpanded {
-                PrimaryFeatureSwitcher(selection: $state.selectedPrimaryFeature)
-                    .frame(width: primaryNavigationFrame.width, height: primaryNavigationFrame.height)
-                    .position(x: primaryNavigationFrame.midX, y: primaryNavigationFrame.midY)
-                    .zIndex(4)
-            }
+            PrimaryFeatureSwitcher(selection: $state.selectedPrimaryFeature)
+                .frame(width: primaryNavigationFrame.width, height: primaryNavigationFrame.height)
+                .position(x: primaryNavigationFrame.midX, y: primaryNavigationFrame.midY)
+                .offset(y: isExpanded ? 0 : -primaryFeatureEntranceOffsetY)
+                .opacity(isExpanded ? 1 : 0)
+                .allowsHitTesting(isExpanded)
+                .animation(primaryFeatureEntranceAnimation, value: isExpanded)
+                .zIndex(4)
 
             if isExpanded, state.temporaryFileShelf.hasItems {
                 FileShelfButton(
                     count: state.temporaryFileShelf.items.count,
                     isActive: state.isFileShelfOverlayVisible,
-                    action: onToggleFileShelfOverlay
+                    action: fileShelfActions.onToggleOverlay
                 )
                 .frame(width: fileShelfButtonFrame.width, height: fileShelfButtonFrame.height)
                 .position(x: fileShelfButtonFrame.midX, y: fileShelfButtonFrame.midY)
+                .transition(.opacity)
                 .zIndex(4)
             }
 
@@ -318,15 +269,15 @@ struct IslandOverlayView: View {
                     filter: state.temporaryFileShelfFilter,
                     selectedItemIDs: state.temporaryFileShelfSelectedItemIDs,
                     isDropTargetActive: state.isFileDropTargetActive,
-                    onFilterChange: onChangeTemporaryFileFilter,
-                    onDone: onDoneFileShelfOverlay,
-                    onClearSelection: onClearTemporaryFileSelection,
-                    onSelectItem: onSelectTemporaryFile,
-                    onSelectItems: onSelectTemporaryFiles,
-                    onRemoveItem: onRemoveTemporaryFile,
-                    onClear: onClearTemporaryFiles,
-                    onDragStarted: onStartTemporaryFileDrag,
-                    onDragCompleted: onCompleteTemporaryFileDrag,
+                    onFilterChange: fileShelfActions.onFilterChange,
+                    onDone: fileShelfActions.onDoneOverlay,
+                    onClearSelection: fileShelfActions.onClearSelection,
+                    onSelectItem: fileShelfActions.onSelectItem,
+                    onSelectItems: fileShelfActions.onSelectItems,
+                    onRemoveItem: fileShelfActions.onRemoveItem,
+                    onClear: fileShelfActions.onClearItems,
+                    onDragStarted: fileShelfActions.onDragStarted,
+                    onDragCompleted: fileShelfActions.onDragCompleted,
                     contentBoundaryInset: metrics.expandedContentGuardInset,
                     topBoundaryInset: metrics.expandedHorizontalContentPadding
                 )
@@ -595,5 +546,15 @@ private struct MusicSkipGlyph: View {
             .symbolRenderingMode(.monochrome)
             .foregroundStyle(.white)
         .frame(width: 18, height: 18)
+    }
+}
+
+private struct PrimaryFeatureButtonStyle: ButtonStyle {
+    let animationProfile: IslandAnimationProfile
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? animationProfile.primaryFeatureButtonPressScale : 1.0)
+            .animation(.easeOut(duration: animationProfile.primaryFeatureButtonPressDuration), value: configuration.isPressed)
     }
 }
