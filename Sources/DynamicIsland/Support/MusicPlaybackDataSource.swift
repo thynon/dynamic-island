@@ -1,4 +1,5 @@
 import AppKit
+import DynamicIslandCore
 import Foundation
 
 struct MusicWaveformSnapshot: Equatable, Sendable {
@@ -51,25 +52,6 @@ struct MusicPlaybackSnapshot: Equatable, Sendable {
 protocol MusicPlaybackDataSource: Sendable {
     func currentSnapshot() async -> MusicPlaybackSnapshot
     func skipTrack(_ direction: MusicSkipDirection) async -> Bool
-}
-
-enum MusicSkipDirection: Equatable, Sendable {
-    case previous
-    case next
-
-    var appleScriptCommand: String {
-        switch self {
-        case .previous:
-            return """
-            try
-                set player position to 0
-            end try
-            previous track
-            """
-        case .next:
-            return "next track"
-        }
-    }
 }
 
 final class ScriptableMusicPlaybackDataSource: MusicPlaybackDataSource, @unchecked Sendable {
@@ -260,9 +242,23 @@ final class ScriptableMusicPlaybackDataSource: MusicPlaybackDataSource, @uncheck
         return runAppleScript(script) == "playing"
     }
 
+    private static func appleScriptCommand(for direction: MusicSkipDirection) -> String {
+        switch direction {
+        case .previous:
+            return """
+            try
+                set player position to 0
+            end try
+            previous track
+            """
+        case .next:
+            return "next track"
+        }
+    }
+
     private static func skipTrack(_ direction: MusicSkipDirection, for player: ScriptableMusicPlayer) -> Bool {
         let escapedAppName = escapedAppleScriptString(player.appName)
-        let command = direction.appleScriptCommand
+        let command = appleScriptCommand(for: direction)
         let script = """
         if application "\(escapedAppName)" is running then
             tell application "\(escapedAppName)"

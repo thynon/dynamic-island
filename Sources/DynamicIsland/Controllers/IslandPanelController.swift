@@ -11,10 +11,6 @@ final class IslandPanelController {
         case horizontal
     }
 
-    private static let closedHoverHorizontalSlack: CGFloat = 22
-    private static let closedHoverBottomSlack: CGFloat = 10
-    private static let musicSkipEdgeExpansionMax: CGFloat = 50
-    private static let closedCanvasHorizontalSlack: CGFloat = max(closedHoverHorizontalSlack, musicSkipEdgeExpansionMax * 2)
     private static let gestureAxisLockThreshold: CGFloat = 6
     private static let scrollActivationThreshold: CGFloat = 6
     private static let horizontalCommitDistance: CGFloat = 50
@@ -28,6 +24,7 @@ final class IslandPanelController {
     private static let debugExpandedOnLaunchEnvironmentKey = "ISLAND_DEBUG_EXPANDED_ON_LAUNCH"
     private static let debugFileShelfURLsEnvironmentKey = "ISLAND_DEBUG_FILE_SHELF_URLS"
     private static let debugCalibrationEnvironmentKey = "ISLAND_DEBUG_CALIBRATION"
+    private static let debugPrimaryFeatureFrameCaptureDirectoryEnvironmentKey = "ISLAND_DEBUG_PRIMARY_FEATURE_FRAME_CAPTURE_DIR"
 
     private var metrics: NotchMetrics
     private var isExpanded = false
@@ -60,6 +57,7 @@ final class IslandPanelController {
     private var debugMusicSignalTask: Task<Void, Never>?
     private var musicSkipTask: Task<Void, Never>?
     private var temporaryFileShelfPruningTask: Task<Void, Never>?
+    private var didStartDebugPrimaryFeatureFrameCapture = false
     nonisolated(unsafe) private var runtimeSettingsCancellable: AnyCancellable?
     nonisolated(unsafe) private var hiddenScrollMonitor: Any?
 
@@ -71,7 +69,7 @@ final class IslandPanelController {
         self.runtimeSettings = runtimeSettings
         self.musicPlaybackDataSource = musicPlaybackDataSource
         runtimeSettings.isCalibrationModeEnabled = Self.shouldShowCalibrationOverlay
-        let screenMetrics = ScreenMetricsProvider.profile(for: screen)
+        let screenMetrics = ScreenMetricsProvider.metrics(for: screen)
         metrics = screenMetrics
 
         let overlayState = IslandOverlayState()
@@ -96,7 +94,7 @@ final class IslandPanelController {
         updateRootView()
         position(on: screen ?? NSScreen.main)
         loadDebugTemporaryFileShelfIfNeeded()
-        if Self.shouldStartExpandedForDebug {
+        if Self.shouldStartExpandedForDebug, Self.debugPrimaryFeatureFrameCaptureDirectoryURL == nil {
             setExpanded(true)
         }
         var launchMetadata = Self.displayLogMetadata(for: screen ?? NSScreen.main, metrics: metrics)
@@ -169,6 +167,7 @@ final class IslandPanelController {
         refreshForCurrentScreen()
         panel.orderFrontRegardless()
         interactionLogger.log("panel.show")
+        startDebugPrimaryFeatureFrameCaptureIfNeeded()
     }
 
     func hide() {
@@ -179,7 +178,7 @@ final class IslandPanelController {
     func refreshForCurrentScreen() {
         let screen = NSScreen.main
         let previousMetrics = metrics
-        metrics = ScreenMetricsProvider.profile(for: screen)
+        metrics = ScreenMetricsProvider.metrics(for: screen)
         overlayState.calibrationHasCameraHousing = Self.hasCameraHousing(on: screen)
         if metrics != previousMetrics {
             interactionLogger.log("display.metrics.changed", metadata: Self.displayLogMetadata(for: screen, metrics: metrics))
@@ -339,42 +338,45 @@ final class IslandPanelController {
     }
 
     private func updateRootView() {
+        var actions = FileShelfActions()
+        actions.onSelectItem = { [weak self] itemID, extendingSelection in
+            self?.selectTemporaryFile(id: itemID, extendingSelection: extendingSelection)
+        }
+        actions.onSelectItems = { [weak self] itemIDs, extendingSelection in
+            self?.selectTemporaryFiles(ids: itemIDs, extendingSelection: extendingSelection)
+        }
+        actions.onRemoveItem = { [weak self] itemID in
+            self?.removeTemporaryFile(id: itemID)
+        }
+        actions.onClearItems = { [weak self] in
+            self?.clearTemporaryFiles()
+        }
+        actions.onDragStarted = { [weak self] itemIDs in
+            self?.startTemporaryFileDrag(ids: itemIDs)
+        }
+        actions.onDragCompleted = { [weak self] itemIDs, succeeded in
+            self?.completeTemporaryFileDrag(ids: itemIDs, succeeded: succeeded)
+        }
+        actions.onFilterChange = { [weak self] filter in
+            self?.setTemporaryFileShelfFilter(filter)
+        }
+        actions.onClearSelection = { [weak self] in
+            self?.clearTemporaryFileSelection()
+        }
+        actions.onToggleOverlay = { [weak self] in
+            self?.toggleTemporaryFileShelfOverlayFromButton()
+        }
+        actions.onDoneOverlay = { [weak self] in
+            self?.closeTemporaryFileShelfOverlay()
+        }
+
         hostingView.rootView = IslandOverlayView(
             metrics: metrics,
             state: overlayState,
             onExpansionChange: { [weak self] expanded in
                 self?.setExpanded(expanded)
             },
-            onSelectTemporaryFile: { [weak self] itemID, extendingSelection in
-                self?.selectTemporaryFile(id: itemID, extendingSelection: extendingSelection)
-            },
-            onSelectTemporaryFiles: { [weak self] itemIDs, extendingSelection in
-                self?.selectTemporaryFiles(ids: itemIDs, extendingSelection: extendingSelection)
-            },
-            onRemoveTemporaryFile: { [weak self] itemID in
-                self?.removeTemporaryFile(id: itemID)
-            },
-            onClearTemporaryFiles: { [weak self] in
-                self?.clearTemporaryFiles()
-            },
-            onStartTemporaryFileDrag: { [weak self] itemIDs in
-                self?.startTemporaryFileDrag(ids: itemIDs)
-            },
-            onCompleteTemporaryFileDrag: { [weak self] itemIDs, succeeded in
-                self?.completeTemporaryFileDrag(ids: itemIDs, succeeded: succeeded)
-            },
-            onChangeTemporaryFileFilter: { [weak self] filter in
-                self?.setTemporaryFileShelfFilter(filter)
-            },
-            onClearTemporaryFileSelection: { [weak self] in
-                self?.clearTemporaryFileSelection()
-            },
-            onToggleFileShelfOverlay: { [weak self] in
-                self?.toggleTemporaryFileShelfOverlayFromButton()
-            },
-            onDoneFileShelfOverlay: { [weak self] in
-                self?.closeTemporaryFileShelfOverlay()
-            }
+            fileShelfActions: actions
         )
     }
 
@@ -407,6 +409,10 @@ final class IslandPanelController {
         hostingView.onMouseEntered = { [weak self] in
             guard let self, !self.overlayState.isShellHidden else { return }
             self.syncHoverWithPointer()
+            self.interactionLogger.log("hover.entered", metadata: [
+                "isExpanded": self.isExpanded,
+                "musicPlaying": self.overlayState.musicPlayback.isPlaying
+            ])
         }
         hostingView.onMouseMoved = { [weak self] in
             guard let self, !self.overlayState.isShellHidden else { return }
@@ -418,6 +424,10 @@ final class IslandPanelController {
             if !self.overlayState.isFileShelfPinnedOpen {
                 self.setExpanded(false)
             }
+            self.interactionLogger.log("hover.exited", metadata: [
+                "isExpanded": self.isExpanded,
+                "fileShelfPinned": self.overlayState.isFileShelfPinnedOpen
+            ])
         }
         hostingView.onScroll = { [weak self] deltaX, deltaY, phase, momentumPhase in
             self?.handleScroll(deltaX: deltaX, deltaY: deltaY, phase: phase, momentumPhase: momentumPhase)
@@ -542,6 +552,10 @@ final class IslandPanelController {
         }
         overlayState.isFileShelfOverlayVisible = true
         overlayState.isFileShelfPinnedOpen = pinned
+        interactionLogger.log("file.shelf.opened", metadata: [
+            "pinned": pinned,
+            "itemCount": temporaryFileShelfStore.shelf.items.count
+        ])
     }
 
     private func closeTemporaryFileShelfOverlay() {
@@ -701,7 +715,7 @@ final class IslandPanelController {
                 "usesExplicitPhase": scrollGestureUsesExplicitPhase
             ])
             updateHorizontalMusicSkip()
-        } else if verticalDominant, abs(accumulatedScrollDeltaY) >= axisLockThreshold {
+        } else if canHandleVerticalHideShow, verticalDominant, abs(accumulatedScrollDeltaY) >= axisLockThreshold {
             activeScrollGesture = .vertical
             interactionLogger.log("scroll.gesture.locked", metadata: [
                 "axis": "vertical",
@@ -733,7 +747,17 @@ final class IslandPanelController {
             && !overlayState.isTrackInfoPresented
     }
 
+    private var canHandleVerticalHideShow: Bool {
+        !isExpanded
+            && !overlayState.isShellHidden
+    }
+
     private func updateVerticalScrollIntent() {
+        guard canHandleVerticalHideShow else {
+            resetScrollGesture(shouldCommitPendingSkip: false)
+            return
+        }
+
         let activationThreshold = scaledGestureThreshold(Self.scrollActivationThreshold)
         if accumulatedScrollDeltaY < -activationThreshold {
             setShellHidden(true)
@@ -778,7 +802,7 @@ final class IslandPanelController {
             break
         case .tracking(let direction, let progress):
             withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.82)) {
-                overlayState.musicSkipFeedbackDirection = musicSkipDirection(from: direction)
+                overlayState.musicSkipFeedbackDirection = direction
                 overlayState.musicSkipGestureProgress = progress
                 overlayState.isMusicSkipArmed = false
             }
@@ -790,7 +814,7 @@ final class IslandPanelController {
                 ])
             }
             withAnimation(.easeOut(duration: 0.10)) {
-                overlayState.musicSkipFeedbackDirection = musicSkipDirection(from: direction)
+                overlayState.musicSkipFeedbackDirection = direction
                 overlayState.musicSkipGestureProgress = progress
                 overlayState.isMusicSkipArmed = true
             }
@@ -808,7 +832,7 @@ final class IslandPanelController {
         }
     }
 
-    private func logHorizontalMusicSkipCancelled(direction: IslandMusicSkipDirection?, reason: String) {
+    private func logHorizontalMusicSkipCancelled(direction: MusicSkipDirection?, reason: String) {
         guard let direction else { return }
         interactionLogger.log("music.skip.cancelled", metadata: [
             "reason": reason,
@@ -848,25 +872,15 @@ final class IslandPanelController {
         hasTriggeredHorizontalSkip = true
         lastMusicSkipDate = now
         overlayState.isMusicSkipArmed = false
-        let musicDirection = musicSkipDirection(from: direction)
         interactionLogger.log("music.skip.commit", metadata: [
             "direction": Self.musicSkipDirectionDescription(direction),
             "deltaX": Double(accumulatedScrollDeltaX)
         ])
-        performMusicSkip(musicDirection)
+        performMusicSkip(direction)
         return true
     }
 
-    private func musicSkipDirection(from direction: IslandMusicSkipDirection) -> MusicSkipDirection {
-        switch direction {
-        case .previous:
-            return .previous
-        case .next:
-            return .next
-        }
-    }
-
-    private static func musicSkipDirectionDescription(_ direction: IslandMusicSkipDirection) -> String {
+    private static func musicSkipDirectionDescription(_ direction: MusicSkipDirection) -> String {
         switch direction {
         case .previous:
             return "previous"
@@ -1084,7 +1098,7 @@ final class IslandPanelController {
         else {
             return 0
         }
-        return Self.musicSkipEdgeExpansionMax * min(max(overlayState.musicSkipGestureProgress, 0), 1)
+        return NotchMetrics.musicSkipEdgeExpansionMax * min(max(overlayState.musicSkipGestureProgress, 0), 1)
     }
 
     private var currentShellHorizontalOffsetForHitTesting: CGFloat {
@@ -1113,6 +1127,16 @@ final class IslandPanelController {
         return ["1", "true", "yes"].contains(value.lowercased())
     }
 
+    private static var debugPrimaryFeatureFrameCaptureDirectoryURL: URL? {
+        guard
+            let path = ProcessInfo.processInfo.environment[debugPrimaryFeatureFrameCaptureDirectoryEnvironmentKey],
+            !path.isEmpty
+        else {
+            return nil
+        }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
     private static var debugFileShelfURLs: [URL] {
         let rawValue = ProcessInfo.processInfo.environment[debugFileShelfURLsEnvironmentKey] ?? ""
         return rawValue
@@ -1129,6 +1153,40 @@ final class IslandPanelController {
         syncTemporaryFileShelfState()
         overlayState.isFileShelfOverlayVisible = true
         overlayState.isFileShelfPinnedOpen = true
+    }
+
+    private func startDebugPrimaryFeatureFrameCaptureIfNeeded() {
+        guard !didStartDebugPrimaryFeatureFrameCapture else { return }
+        guard let directoryURL = Self.debugPrimaryFeatureFrameCaptureDirectoryURL else { return }
+        didStartDebugPrimaryFeatureFrameCapture = true
+
+        try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        captureDebugPrimaryFeatureFrame(directoryURL: directoryURL, index: 0)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.setExpanded(true)
+        }
+
+        for index in 1...24 {
+            let delay = 0.05 + (Double(index) * 0.035)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.captureDebugPrimaryFeatureFrame(directoryURL: directoryURL, index: index)
+            }
+        }
+    }
+
+    private func captureDebugPrimaryFeatureFrame(directoryURL: URL, index: Int) {
+        let bounds = hostingView.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        hostingView.layoutSubtreeIfNeeded()
+
+        guard let bitmap = hostingView.bitmapImageRepForCachingDisplay(in: bounds) else { return }
+        bitmap.size = bounds.size
+        hostingView.cacheDisplay(in: bounds, to: bitmap)
+
+        guard let data = bitmap.representation(using: .png, properties: [:]) else { return }
+        let fileName = String(format: "frame-%03d.png", index)
+        try? data.write(to: directoryURL.appendingPathComponent(fileName))
     }
 
     private func startDebugMusicSignalPolling() {
@@ -1236,12 +1294,17 @@ final class IslandPanelController {
         withAnimation(.linear(duration: 0.22)) {
             overlayState.isTrackInfoPresented = true
         }
+        interactionLogger.log("track.info.shown", metadata: [
+            "title": overlayState.musicPlayback.title,
+            "artist": overlayState.musicPlayback.artist
+        ])
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
             withAnimation(.linear(duration: 0.22)) {
                 self.overlayState.isTrackInfoPresented = false
             }
+            self.interactionLogger.log("track.info.dismissed")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
                 guard let self, !self.overlayState.isTrackInfoPresented, !self.overlayState.usesOpenCanvas else { return }
                 self.setPanelFrame(
@@ -1272,8 +1335,8 @@ final class IslandPanelController {
     ) -> CGSize {
         guard !usesOpenCanvas else { return metrics.openCanvasWindowSize }
         return CGSize(
-            width: metrics.musicClosedShellWidth + Self.closedCanvasHorizontalSlack,
-            height: (showsTrackInfo ? metrics.musicTrackInfoShellHeight : metrics.closedHeight) + Self.closedHoverBottomSlack
+            width: metrics.musicClosedShellWidth + NotchMetrics.closedCanvasHorizontalSlack,
+            height: (showsTrackInfo ? metrics.musicTrackInfoShellHeight : metrics.closedHeight) + NotchMetrics.closedHoverBottomSlack
         )
     }
 

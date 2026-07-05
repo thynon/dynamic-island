@@ -4,20 +4,19 @@ public struct NotchMetrics: Equatable, Sendable {
     public static let defaultCameraHousingWidth: CGFloat = 185
     public static let defaultClosedHeight: CGFloat = 32
     public static let defaultMusicTrackInfoShellHeight: CGFloat = 72
-    public static let statusSlotWidth: CGFloat = 37.5
+    public static let defaultStatusSlotWidth: CGFloat = 37.5
     public static let musicStatusSlotWidth: CGFloat = 82.5
-    public static let openWidth: CGFloat = 650
-    public static let openHeight: CGFloat = 230
+    public static let defaultOpenWidth: CGFloat = 850
+    public static let defaultOpenHeight: CGFloat = 200
     public static let closedOuterCornerRadius: CGFloat = 30
     public static let defaultClosedConcaveTopRadius: CGFloat = 18
     public static let defaultOpenTopCornerRadius: CGFloat = 16
     public static let closedInnerCornerRadius: CGFloat = 7
-    public static let openBottomCornerRadius: CGFloat = 24
+    public static let defaultOpenBottomCornerRadius: CGFloat = 24
     public static let defaultContentBoundaryInset: CGFloat = 5
     public static let defaultClosedCanvasBottomSlack: CGFloat = 16
     public static let compactNotchedReferenceWidth: CGFloat = 1512
     public static let compactNotchedReferenceHeight: CGFloat = 982
-    private static let openWidthReductionPerSide: CGFloat = 25
 
     public let cameraHousingWidth: CGFloat
     public let closedHeight: CGFloat
@@ -140,6 +139,15 @@ public struct NotchMetrics: Equatable, Sendable {
         CGSize(width: openWidth, height: openHeight + Self.defaultClosedCanvasBottomSlack)
     }
 
+    /// 闭合状态下悬停区域水平扩展量（左右各扩展，用于命中检测和画布宽度计算）
+    public static let closedHoverHorizontalSlack: CGFloat = 22
+    /// 闭合状态下悬停区域底部扩展量（用于画布高度计算）
+    public static let closedHoverBottomSlack: CGFloat = 10
+    /// 音乐跳过手势触发时 shell 向两侧扩展的最大像素值
+    public static let musicSkipEdgeExpansionMax: CGFloat = 50
+    /// 闭合画布水平扩展量（保证两侧跳过反馈有足够空间）
+    public static let closedCanvasHorizontalSlack: CGFloat = max(closedHoverHorizontalSlack, musicSkipEdgeExpansionMax * 2)
+
     public static let preview14Inch = NotchMetrics(
         cameraHousingWidth: defaultCameraHousingWidth,
         closedHeight: defaultClosedHeight
@@ -148,13 +156,13 @@ public struct NotchMetrics: Equatable, Sendable {
     public init(
         cameraHousingWidth: CGFloat,
         closedHeight: CGFloat,
-        statusSlotWidth: CGFloat = Self.statusSlotWidth,
-        openWidth: CGFloat = Self.openWidth,
-        openHeight: CGFloat = Self.openHeight,
+        statusSlotWidth: CGFloat = Self.defaultStatusSlotWidth,
+        openWidth: CGFloat = Self.defaultOpenWidth,
+        openHeight: CGFloat = Self.defaultOpenHeight,
         closedTopCornerRadius: CGFloat = Self.closedOuterCornerRadius,
         openTopCornerRadius: CGFloat = Self.defaultOpenTopCornerRadius,
         closedBottomCornerRadius: CGFloat = Self.closedInnerCornerRadius,
-        openBottomCornerRadius: CGFloat = Self.openBottomCornerRadius
+        openBottomCornerRadius: CGFloat = Self.defaultOpenBottomCornerRadius
     ) {
         let resolvedCameraHousingWidth = max(1, cameraHousingWidth.rounded())
         let resolvedClosedHeight = max(1, closedHeight.rounded())
@@ -212,12 +220,7 @@ public struct NotchMetrics: Equatable, Sendable {
         hasCameraHousing: Bool
     ) -> CGSize {
         if hasCameraHousing {
-            let totalWidthReduction = openWidthReductionPerSide * 2
-            let maxWidth = max(openWidth, min(frameWidth - 80, 820) - totalWidthReduction)
-            let preferredWidth = max(openWidth, (frameWidth * 0.45) - totalWidthReduction)
-            let width = min(maxWidth, preferredWidth).rounded()
-            let height = min(252, max(openHeight, frameHeight * 0.21)).rounded()
-            return CGSize(width: width, height: height)
+            return CGSize(width: defaultOpenWidth, height: defaultOpenHeight)
         }
 
         let width = min(680, max(560, frameWidth * 0.38)).rounded()

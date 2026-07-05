@@ -1,16 +1,16 @@
 import CoreGraphics
 
-public enum IslandMusicSkipDirection: Equatable, Sendable {
+public enum MusicSkipDirection: Equatable, Sendable {
     case previous
     case next
 }
 
 public enum MusicSkipGestureState: Equatable, Sendable {
     case idle
-    case tracking(direction: IslandMusicSkipDirection, progress: CGFloat)
-    case armed(direction: IslandMusicSkipDirection, progress: CGFloat)
-    case cancelled(direction: IslandMusicSkipDirection)
-    case committed(direction: IslandMusicSkipDirection)
+    case tracking(direction: MusicSkipDirection, progress: CGFloat)
+    case armed(direction: MusicSkipDirection, progress: CGFloat)
+    case cancelled(direction: MusicSkipDirection)
+    case committed(direction: MusicSkipDirection)
 }
 
 public struct MusicSkipGestureStateMachine: Equatable, Sendable {
@@ -18,7 +18,7 @@ public struct MusicSkipGestureStateMachine: Equatable, Sendable {
     public let cancelDistance: CGFloat
     public private(set) var state: MusicSkipGestureState
 
-    private var lockedDirection: IslandMusicSkipDirection?
+    private var lockedDirection: MusicSkipDirection?
 
     public init(commitDistance: CGFloat, cancelDistance: CGFloat) {
         self.commitDistance = max(1, commitDistance)
@@ -32,7 +32,7 @@ public struct MusicSkipGestureStateMachine: Equatable, Sendable {
         return false
     }
 
-    public func currentDirection() -> IslandMusicSkipDirection? {
+    public func currentDirection() -> MusicSkipDirection? {
         switch state {
         case .idle:
             return lockedDirection
@@ -90,11 +90,11 @@ public struct MusicSkipGestureStateMachine: Equatable, Sendable {
         lockedDirection = nil
     }
 
-    private static func direction(for accumulatedDeltaX: CGFloat) -> IslandMusicSkipDirection {
+    private static func direction(for accumulatedDeltaX: CGFloat) -> MusicSkipDirection {
         accumulatedDeltaX < 0 ? .previous : .next
     }
 
-    private func directionalDistance(_ accumulatedDeltaX: CGFloat, for direction: IslandMusicSkipDirection) -> CGFloat {
+    private func directionalDistance(_ accumulatedDeltaX: CGFloat, for direction: MusicSkipDirection) -> CGFloat {
         switch direction {
         case .previous:
             return -accumulatedDeltaX

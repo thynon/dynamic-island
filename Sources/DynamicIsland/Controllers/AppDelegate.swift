@@ -28,8 +28,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func configureStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "cx"
-        item.button?.toolTip = "Dynamic Island MVP"
+        // "record.circle" 在 macOS 14+ 上稳定存在，作为 Dynamic Island 的象征图标
+        item.button?.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "Dynamic Island")
+        item.button?.toolTip = "Dynamic Island"
 
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "设置", action: #selector(toggleSettings), keyEquivalent: ","))
@@ -37,11 +38,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Show Dynamic Island", action: #selector(showIsland), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Hide Dynamic Island", action: #selector(hideIsland), keyEquivalent: ""))
         menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "打开日志文件夹", action: #selector(openLogsFolder), keyEquivalent: ""))
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Dynamic Island", action: #selector(quit), keyEquivalent: "q"))
         menu.items.forEach { $0.target = self }
         item.menu = menu
 
         statusItem = item
+    }
+
+    @objc private func openLogsFolder() {
+        let logsDirectory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Logs/DynamicIsland", isDirectory: true)
+        // 如果目录不存在就先创建，确保 Finder 能打开
+        try? FileManager.default.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(logsDirectory)
     }
 
     @objc private func toggleSettings() {

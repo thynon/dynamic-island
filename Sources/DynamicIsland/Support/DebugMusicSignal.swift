@@ -1,4 +1,5 @@
 import CoreGraphics
+import DynamicIslandCore
 import Foundation
 
 struct DebugMusicSignal: Equatable, Sendable {

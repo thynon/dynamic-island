@@ -3,10 +3,10 @@ import DynamicIslandCore
 
 enum ScreenMetricsProvider {
     static func metrics(for screen: NSScreen?) -> NotchMetrics {
-        profile(for: screen)
+        resolvedMetrics(for: screen)
     }
 
-    static func profile(
+    private static func resolvedMetrics(
         for screen: NSScreen?,
         store: DisplayProfileStore = DisplayProfileStore()
     ) -> NotchMetrics {
@@ -23,12 +23,13 @@ enum ScreenMetricsProvider {
             backingScaleFactor: Double(screen.backingScaleFactor)
         )
 
-        if let cachedProfile = store.cachedProfile(matching: signature) {
+        let freshProfile = DisplayProfile(signature: signature)
+        if let cachedProfile = store.cachedProfile(matching: signature),
+           cachedProfile.metrics == freshProfile.metrics {
             return cachedProfile.metrics
         }
 
-        let profile = DisplayProfile(signature: signature)
-        store.save(profile)
-        return profile.metrics
+        store.save(freshProfile)
+        return freshProfile.metrics
     }
 }
