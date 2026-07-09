@@ -193,8 +193,8 @@ struct IslandOverlayView: View {
         metrics.closedHeight + 4 + (expandedTemporaryShelfHeight / 2)
     }
 
-    private var fileShelfButtonFrame: CGRect {
-        metrics.expandedTopStatusBandLayout.fileShelfButtonFrame(width: 68, height: 22)
+    private var filesPrimaryFeatureFrame: CGRect {
+        metrics.expandedTopStatusBandLayout.fileShelfButtonFrame(width: 30, height: 22)
     }
 
     private var primaryNavigationFrame: CGRect {
@@ -203,6 +203,10 @@ struct IslandOverlayView: View {
 
     private var primaryContentFrame: CGRect {
         metrics.expandedPrimaryContentLayout.tasksContentFrame
+    }
+
+    private var filesPrimaryContentFrame: CGRect {
+        metrics.expandedPrimaryContentLayout.filesContentFrame
     }
 
     private var topBandEnergyFrame: CGRect {
@@ -280,24 +284,46 @@ struct IslandOverlayView: View {
                 .allowsHitTesting(isExpanded)
                 .zIndex(4)
 
+            FilesPrimaryFeatureButton(
+                count: state.temporaryFileShelf.items.count,
+                isSelected: state.selectedPrimaryFeature == .files,
+                isExpanded: isExpanded
+            ) {
+                fileShelfActions.onOpenFilesPrimaryFeature()
+            }
+            .frame(width: filesPrimaryFeatureFrame.width, height: filesPrimaryFeatureFrame.height)
+            .position(x: filesPrimaryFeatureFrame.midX, y: filesPrimaryFeatureFrame.midY)
+            .allowsHitTesting(isExpanded)
+            .zIndex(4)
+
             if isExpanded && state.selectedPrimaryFeature == .tasks && state.isCalibrationOverlayVisible {
                 CodexTasksContentView(snapshot: state.codexStatusBarSnapshot)
                     .frame(width: primaryContentFrame.width, height: primaryContentFrame.height)
                     .position(x: primaryContentFrame.midX, y: primaryContentFrame.midY)
                     .allowsHitTesting(false)
+                    .transition(.opacity)
                     .zIndex(21)
             }
 
-            if isExpanded, state.temporaryFileShelf.hasItems {
-                FileShelfButton(
-                    count: state.temporaryFileShelf.items.count,
-                    isActive: state.isFileShelfOverlayVisible,
-                    action: fileShelfActions.onToggleOverlay
+            if isExpanded && state.selectedPrimaryFeature == .files {
+                FilesPrimaryContentView(
+                    shelf: state.temporaryFileShelf,
+                    selectedItemIDs: state.temporaryFileShelfSelectedItemIDs,
+                    airDropUndoItemCount: state.airDropUndoItemCount,
+                    isDropTargetActive: state.isFileDropTargetActive,
+                    displayMode: state.filesDisplayMode,
+                    onAirDrop: fileShelfActions.onAirDropItems,
+                    onUndoAirDrop: fileShelfActions.onUndoAirDropItems,
+                    onDisplayModeChange: fileShelfActions.onSetFilesDisplayMode,
+                    onRemoveItems: fileShelfActions.onRemoveItems,
+                    onSelectItem: fileShelfActions.onSelectItem,
+                    onDragStarted: fileShelfActions.onDragStarted,
+                    onDragCompleted: fileShelfActions.onDragCompleted
                 )
-                .frame(width: fileShelfButtonFrame.width, height: fileShelfButtonFrame.height)
-                .position(x: fileShelfButtonFrame.midX, y: fileShelfButtonFrame.midY)
+                .frame(width: filesPrimaryContentFrame.width, height: filesPrimaryContentFrame.height)
+                .position(x: filesPrimaryContentFrame.midX, y: filesPrimaryContentFrame.midY)
                 .transition(.opacity)
-                .zIndex(4)
+                .zIndex(2)
             }
 
             if isExpanded, state.isFileShelfOverlayVisible {
@@ -412,6 +438,7 @@ struct IslandOverlayView: View {
             .animation(.easeOut(duration: 0.14), value: state.isHovered)
             .animation(.easeOut(duration: 0.14), value: state.isFileDropTargetActive)
             .animation(.easeOut(duration: 0.14), value: state.isFileShelfOverlayVisible)
+            .animation(.easeInOut(duration: 0.18), value: state.selectedPrimaryFeature)
             .onAppear {
                 scheduleTopBandEnergyActivation(expanded: isExpanded && state.isTopBandEnergyEffectEnabled)
             }
@@ -566,7 +593,7 @@ private struct PrimaryFeatureSwitcher: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(Array(IslandPrimaryFeature.allCases.enumerated()), id: \.element.id) { index, feature in
+            ForEach(Array(IslandPrimaryFeature.rightNavigationCases.enumerated()), id: \.element.id) { index, feature in
                 Button {
                     selection = feature
                 } label: {
@@ -604,33 +631,60 @@ private struct PrimaryFeatureSwitcher: View {
     }
 }
 
-private struct FileShelfButton: View {
+private struct FilesPrimaryFeatureButton: View {
     let count: Int
-    let isActive: Bool
+    let isSelected: Bool
+    let isExpanded: Bool
     let action: @MainActor () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: "tray.full")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("Files")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("\(count)")
-                    .font(.system(size: 9, weight: .medium))
-                    .monospacedDigit()
-                    .opacity(0.62)
+            ZStack(alignment: .topTrailing) {
+                ZStack {
+                    Image(systemName: "tray.full")
+                        .opacity(isSelected ? 0 : 1)
+
+                    Image(systemName: "tray.full.fill")
+                        .opacity(isSelected ? 1 : 0)
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 18, height: 18)
+                .animation(.easeInOut(duration: 0.18), value: isSelected)
+
+                if count > 0 {
+                    Text(badgeText)
+                        .font(.system(size: 7, weight: .bold))
+                        .monospacedDigit()
+                        .foregroundStyle(.black.opacity(0.82))
+                        .frame(minWidth: 11, minHeight: 11)
+                        .padding(.horizontal, count > 9 ? 2 : 0)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(.white.opacity(0.92))
+                        )
+                        .offset(x: 5, y: -4)
+                }
             }
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(
                 Capsule(style: .continuous)
-                    .fill(.white.opacity(isActive ? 0.16 : 0.08))
+                    .fill(.white.opacity(isSelected ? 0.22 : 0.08))
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .strokeBorder(.white.opacity(isSelected ? 0.2 : 0), lineWidth: 1)
+                    )
             )
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
+        .offset(y: isExpanded ? 0 : -6)
+        .opacity(isExpanded ? 1 : 0)
         .accessibilityLabel("Files")
+    }
+
+    private var badgeText: String {
+        count > 99 ? "99+" : "\(count)"
     }
 }
 

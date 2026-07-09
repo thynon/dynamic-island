@@ -53,6 +53,7 @@ final class IslandPanelController {
     private let temporaryFileShelfStore = TemporaryFileShelfStore()
     private let interactionLogger = IslandInteractionLogger()
     private var temporaryFileShelfSelection = TemporaryFileShelfSelection()
+    private var lastNonFilesPrimaryFeature: IslandPrimaryFeature = .tasks
     private var musicPlaybackPollingTask: Task<Void, Never>?
     private var debugMusicSignalTask: Task<Void, Never>?
     private var codexReasoningEffortPollingTask: Task<Void, Never>?
@@ -60,6 +61,10 @@ final class IslandPanelController {
     private var musicSkipTask: Task<Void, Never>?
     private var temporaryFileShelfPruningTask: Task<Void, Never>?
     private var didStartDebugPrimaryFeatureFrameCapture = false
+    private var activeAirDropSharingDelegates: [UUID: AirDropSharingDelegate] = [:]
+    private var pendingAirDropItemIDs: Set<TemporaryShelfItem.ID> = []
+    private var airDropUndoFileURLs: [URL] = []
+    private var airDropUndoClearWorkItem: DispatchWorkItem?
     nonisolated(unsafe) private var runtimeSettingsCancellable: AnyCancellable?
     nonisolated(unsafe) private var hiddenScrollMonitor: Any?
 
@@ -112,9 +117,7 @@ final class IslandPanelController {
             startMusicPlaybackPolling()
         }
         startCodexReasoningEffortPolling()
-        if runtimeSettings.isCalibrationModeEnabled {
-            startCodexStatusPolling()
-        }
+        startCodexStatusPolling()
         startTemporaryFileShelfPruning()
         observeRuntimeSettings()
     }
@@ -334,11 +337,6 @@ final class IslandPanelController {
 
         overlayState.isCalibrationOverlayVisible = calibrationModeEnabled
         overlayState.calibrationHasCameraHousing = Self.hasCameraHousing(on: NSScreen.main)
-        if calibrationModeEnabled {
-            startCodexStatusPolling()
-        } else {
-            stopCodexStatusPolling()
-        }
 
         interactionLogger.log("settings.changed", metadata: [
             "fileShelfEnabled": fileShelfEnabled,
@@ -361,6 +359,9 @@ final class IslandPanelController {
         actions.onRemoveItem = { [weak self] itemID in
             self?.removeTemporaryFile(id: itemID)
         }
+        actions.onRemoveItems = { [weak self] itemIDs in
+            self?.removeTemporaryFiles(ids: itemIDs)
+        }
         actions.onClearItems = { [weak self] in
             self?.clearTemporaryFiles()
         }
@@ -375,6 +376,18 @@ final class IslandPanelController {
         }
         actions.onClearSelection = { [weak self] in
             self?.clearTemporaryFileSelection()
+        }
+        actions.onAirDropItems = { [weak self] itemIDs in
+            self?.airDropTemporaryFiles(ids: itemIDs)
+        }
+        actions.onUndoAirDropItems = { [weak self] in
+            self?.undoAirDropRemoval()
+        }
+        actions.onOpenFilesPrimaryFeature = { [weak self] in
+            self?.openFilesPrimaryFeature()
+        }
+        actions.onSetFilesDisplayMode = { [weak self] mode in
+            self?.setFilesDisplayMode(mode)
         }
         actions.onToggleOverlay = { [weak self] in
             self?.toggleTemporaryFileShelfOverlayFromButton()
@@ -434,12 +447,13 @@ final class IslandPanelController {
         hostingView.onMouseExited = { [weak self] in
             guard let self else { return }
             self.overlayState.isHovered = false
-            if !self.overlayState.isFileShelfPinnedOpen {
+            if self.shouldCollapseOnMouseExit() {
                 self.setExpanded(false)
             }
             self.interactionLogger.log("hover.exited", metadata: [
                 "isExpanded": self.isExpanded,
-                "fileShelfPinned": self.overlayState.isFileShelfPinnedOpen
+                "fileShelfPinned": self.overlayState.isFileShelfPinnedOpen,
+                "filesDisplayMode": self.overlayState.filesDisplayMode.rawValue
             ])
         }
         hostingView.onScroll = { [weak self] deltaX, deltaY, phase, momentumPhase in
@@ -467,11 +481,8 @@ final class IslandPanelController {
         temporaryFileShelfStore.pruneExpired()
         temporaryFileShelfStore.addFileURLs(fileURLs)
         syncTemporaryFileShelfState()
-        if !isExpanded {
-            setExpanded(true)
-        }
-        overlayState.isFileShelfOverlayVisible = true
-        overlayState.isFileShelfPinnedOpen = true
+        overlayState.isFileShelfOverlayVisible = false
+        syncFilesPinnedOpenState()
         overlayState.isFileDropTargetActive = false
         interactionLogger.log("file.drop.accepted", metadata: [
             "count": fileURLs.count,
@@ -526,7 +537,10 @@ final class IslandPanelController {
         ])
 
         if succeeded {
-            removeTemporaryFiles(ids: itemIDs)
+            let externalItemIDs = itemIDs.subtracting(pendingAirDropItemIDs)
+            if !externalItemIDs.isEmpty {
+                removeTemporaryFiles(ids: externalItemIDs)
+            }
         }
     }
 
@@ -543,6 +557,21 @@ final class IslandPanelController {
     private func removeTemporaryFiles(ids: Set<TemporaryShelfItem.ID>) {
         temporaryFileShelfStore.removeItems(ids: ids)
         syncTemporaryFileShelfState()
+    }
+
+    private func removeTemporaryFiles(ids itemIDs: [TemporaryShelfItem.ID]) {
+        let itemIDSet = Set(itemIDs)
+        guard !itemIDSet.isEmpty else { return }
+        let removedFileURLs = temporaryFileShelfStore.shelf.items
+            .filter { itemIDSet.contains($0.id) }
+            .map(\.fileURL)
+        temporaryFileShelfStore.removeItems(ids: itemIDSet)
+        syncTemporaryFileShelfState()
+        interactionLogger.log("file.shelf.removeMany", metadata: [
+            "count": itemIDSet.count,
+            "remainingCount": temporaryFileShelfStore.shelf.items.count,
+            "files": IslandInteractionLogger.sanitizedFileMetadata(for: removedFileURLs)
+        ])
     }
 
     private func clearTemporaryFiles() {
@@ -580,6 +609,52 @@ final class IslandPanelController {
         ])
     }
 
+    private func openFilesPrimaryFeature() {
+        guard runtimeSettings.isFileShelfEnabled else { return }
+        temporaryFileShelfStore.pruneExpired()
+        syncTemporaryFileShelfState()
+
+        if overlayState.selectedPrimaryFeature == .files {
+            closeFilesPrimaryFeature()
+            return
+        }
+
+        lastNonFilesPrimaryFeature = overlayState.selectedPrimaryFeature
+        if !isExpanded {
+            setExpanded(true)
+        }
+        overlayState.selectedPrimaryFeature = .files
+        overlayState.isFileShelfOverlayVisible = false
+        syncFilesPinnedOpenState()
+        overlayState.isFileDropTargetActive = false
+        interactionLogger.log("file.files.opened", metadata: [
+            "itemCount": temporaryFileShelfStore.shelf.items.count,
+            "displayMode": overlayState.filesDisplayMode.rawValue,
+            "pinned": overlayState.isFileShelfPinnedOpen
+        ])
+    }
+
+    private func closeFilesPrimaryFeature() {
+        overlayState.selectedPrimaryFeature = lastNonFilesPrimaryFeature
+        overlayState.isFileShelfOverlayVisible = false
+        overlayState.isFileShelfPinnedOpen = false
+        overlayState.isFileDropTargetActive = false
+        interactionLogger.log("file.files.closed", metadata: [
+            "itemCount": temporaryFileShelfStore.shelf.items.count,
+            "restoredPrimaryFeature": lastNonFilesPrimaryFeature.rawValue
+        ])
+    }
+
+    private func setFilesDisplayMode(_ mode: FilesDisplayMode) {
+        guard overlayState.filesDisplayMode != mode else { return }
+        overlayState.filesDisplayMode = mode
+        syncFilesPinnedOpenState()
+        interactionLogger.log("file.files.displayMode", metadata: [
+            "mode": mode.rawValue,
+            "itemCount": temporaryFileShelfStore.shelf.items.count
+        ])
+    }
+
     private func toggleTemporaryFileShelfOverlayFromButton() {
         guard runtimeSettings.isFileShelfEnabled else { return }
         temporaryFileShelfStore.pruneExpired()
@@ -606,20 +681,159 @@ final class IslandPanelController {
         syncTemporaryFileShelfSelectionState()
     }
 
+    private func airDropTemporaryFiles(ids requestedItemIDs: [TemporaryShelfItem.ID]) {
+        temporaryFileShelfStore.pruneExpired()
+        syncTemporaryFileShelfState()
+
+        let selectedItemIDs = temporaryFileShelfSelection.selectedItemIDs
+        let requestedItemIDSet = Set(requestedItemIDs)
+        let items: [TemporaryShelfItem]
+        if !requestedItemIDSet.isEmpty {
+            items = temporaryFileShelfStore.shelf.items.filter { requestedItemIDSet.contains($0.id) }
+        } else if !selectedItemIDs.isEmpty {
+            items = temporaryFileShelfStore.shelf.items.filter { selectedItemIDs.contains($0.id) }
+        } else {
+            items = temporaryFileShelfStore.shelf.items
+        }
+        let fileURLs = items.map(\.fileURL)
+        let itemIDs = items.map(\.id)
+        guard !fileURLs.isEmpty else { return }
+
+        guard let sharingService = NSSharingService(named: .sendViaAirDrop) else {
+            interactionLogger.log("file.airdrop.unavailable", metadata: [
+                "count": fileURLs.count
+            ])
+            return
+        }
+
+        let delegate = AirDropSharingDelegate(
+            itemIDs: Set(itemIDs),
+            fileURLs: fileURLs,
+            onDidShare: { [weak self] itemIDs, fileURLs in
+                self?.completeAirDropTemporaryFiles(ids: itemIDs, fileURLs: fileURLs)
+            },
+            onDidFinish: { [weak self] token, itemIDs, succeeded, itemCount in
+                self?.finishAirDropSharing(token: token, itemIDs: itemIDs, succeeded: succeeded, itemCount: itemCount)
+            }
+        )
+        pendingAirDropItemIDs.formUnion(itemIDs)
+        syncPendingAirDropState()
+        activeAirDropSharingDelegates[delegate.token] = delegate
+        sharingService.delegate = delegate
+        sharingService.perform(withItems: fileURLs)
+        interactionLogger.log("file.airdrop.opened", metadata: [
+            "count": fileURLs.count,
+            "files": IslandInteractionLogger.sanitizedFileMetadata(for: fileURLs)
+        ])
+    }
+
+    private func completeAirDropTemporaryFiles(ids itemIDs: Set<TemporaryShelfItem.ID>, fileURLs: [URL]) {
+        removeTemporaryFiles(ids: itemIDs)
+        setAirDropUndoFileURLs(fileURLs)
+        interactionLogger.log("file.airdrop.completed", metadata: [
+            "count": fileURLs.count,
+            "undoAvailable": true,
+            "files": IslandInteractionLogger.sanitizedFileMetadata(for: fileURLs)
+        ])
+    }
+
+    private func finishAirDropSharing(
+        token: UUID,
+        itemIDs: Set<TemporaryShelfItem.ID>,
+        succeeded: Bool,
+        itemCount: Int
+    ) {
+        activeAirDropSharingDelegates[token] = nil
+        if !succeeded {
+            pendingAirDropItemIDs.subtract(itemIDs)
+            syncPendingAirDropState()
+            interactionLogger.log("file.airdrop.cancelled", metadata: [
+                "count": itemCount
+            ])
+        }
+    }
+
     private func syncTemporaryFileShelfState() {
         temporaryFileShelfSelection.retainOnly(itemIDs: temporaryFileShelfStore.shelf.items.map(\.id))
         overlayState.temporaryFileShelf = temporaryFileShelfStore.shelf
         syncTemporaryFileShelfSelectionState()
         if !temporaryFileShelfStore.shelf.hasItems {
             overlayState.isFileShelfOverlayVisible = false
-            overlayState.isFileShelfPinnedOpen = false
             overlayState.isFileDropTargetActive = false
             overlayState.temporaryFileShelfFilter = .all
         }
+        syncPendingAirDropState()
+        syncFilesPinnedOpenState()
     }
 
     private func syncTemporaryFileShelfSelectionState() {
         overlayState.temporaryFileShelfSelectedItemIDs = temporaryFileShelfSelection.selectedItemIDs
+    }
+
+    private func syncPendingAirDropState() {
+        pendingAirDropItemIDs.formIntersection(temporaryFileShelfStore.shelf.items.map(\.id))
+    }
+
+    private func setAirDropUndoFileURLs(_ fileURLs: [URL]) {
+        airDropUndoClearWorkItem?.cancel()
+        airDropUndoFileURLs = fileURLs
+        overlayState.airDropUndoItemCount = fileURLs.count
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.clearAirDropUndo()
+        }
+        airDropUndoClearWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: workItem)
+    }
+
+    private func undoAirDropRemoval() {
+        let fileURLs = airDropUndoFileURLs
+        guard !fileURLs.isEmpty else { return }
+        temporaryFileShelfStore.addFileURLs(fileURLs)
+        clearAirDropUndo()
+        syncTemporaryFileShelfState()
+        interactionLogger.log("file.airdrop.undo", metadata: [
+            "count": fileURLs.count,
+            "files": IslandInteractionLogger.sanitizedFileMetadata(for: fileURLs)
+        ])
+    }
+
+    private func clearAirDropUndo() {
+        airDropUndoClearWorkItem?.cancel()
+        airDropUndoClearWorkItem = nil
+        airDropUndoFileURLs = []
+        overlayState.airDropUndoItemCount = 0
+    }
+
+    private func syncFilesPinnedOpenState() {
+        guard overlayState.selectedPrimaryFeature == .files else {
+            overlayState.isFileShelfPinnedOpen = overlayState.isFileShelfOverlayVisible
+            return
+        }
+
+        switch overlayState.filesDisplayMode {
+        case .auto:
+            overlayState.isFileShelfPinnedOpen = false
+        case .pinned:
+            overlayState.isFileShelfPinnedOpen = true
+        case .untilEmpty:
+            overlayState.isFileShelfPinnedOpen = temporaryFileShelfStore.shelf.hasItems
+        }
+    }
+
+    private func shouldCollapseOnMouseExit() -> Bool {
+        guard overlayState.selectedPrimaryFeature == .files else {
+            return !overlayState.isFileShelfPinnedOpen
+        }
+
+        switch overlayState.filesDisplayMode {
+        case .auto:
+            return true
+        case .pinned:
+            return false
+        case .untilEmpty:
+            return !temporaryFileShelfStore.shelf.hasItems
+        }
     }
 
     private func setFileDropTargeted(_ targeted: Bool) {
@@ -628,7 +842,7 @@ final class IslandPanelController {
         withAnimation(.easeOut(duration: 0.14)) {
             overlayState.isFileDropTargetActive = nextValue
             if nextValue {
-                overlayState.isFileShelfOverlayVisible = true
+                overlayState.isFileShelfOverlayVisible = false
             } else if !overlayState.isFileShelfPinnedOpen, !temporaryFileShelfStore.shelf.hasItems {
                 overlayState.isFileShelfOverlayVisible = false
             }
@@ -1164,8 +1378,8 @@ final class IslandPanelController {
         guard !fileURLs.isEmpty else { return }
         temporaryFileShelfStore.addFileURLs(fileURLs)
         syncTemporaryFileShelfState()
-        overlayState.isFileShelfOverlayVisible = true
-        overlayState.isFileShelfPinnedOpen = true
+        overlayState.isFileShelfOverlayVisible = false
+        overlayState.isFileShelfPinnedOpen = false
     }
 
     private func startDebugPrimaryFeatureFrameCaptureIfNeeded() {
@@ -1429,5 +1643,39 @@ final class IslandPanelController {
             width: size.width,
             height: size.height
         )
+    }
+}
+
+private final class AirDropSharingDelegate: NSObject, NSSharingServiceDelegate {
+    let token = UUID()
+
+    private let itemIDs: Set<TemporaryShelfItem.ID>
+    private let fileURLs: [URL]
+    private let onDidShare: @MainActor (Set<TemporaryShelfItem.ID>, [URL]) -> Void
+    private let onDidFinish: @MainActor (UUID, Set<TemporaryShelfItem.ID>, Bool, Int) -> Void
+
+    init(
+        itemIDs: Set<TemporaryShelfItem.ID>,
+        fileURLs: [URL],
+        onDidShare: @escaping @MainActor (Set<TemporaryShelfItem.ID>, [URL]) -> Void,
+        onDidFinish: @escaping @MainActor (UUID, Set<TemporaryShelfItem.ID>, Bool, Int) -> Void
+    ) {
+        self.itemIDs = itemIDs
+        self.fileURLs = fileURLs
+        self.onDidShare = onDidShare
+        self.onDidFinish = onDidFinish
+    }
+
+    func sharingService(_ sharingService: NSSharingService, didShareItems items: [Any]) {
+        Task { @MainActor in
+            onDidShare(itemIDs, fileURLs)
+            onDidFinish(token, itemIDs, true, fileURLs.count)
+        }
+    }
+
+    func sharingService(_ sharingService: NSSharingService, didFailToShareItems items: [Any], error: any Error) {
+        Task { @MainActor in
+            onDidFinish(token, itemIDs, false, fileURLs.count)
+        }
     }
 }
