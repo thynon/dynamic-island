@@ -7,11 +7,16 @@ struct FileShelfActions {
     var onSelectItem: @MainActor (TemporaryShelfItem.ID, Bool) -> Void = { _, _ in }
     var onSelectItems: @MainActor ([TemporaryShelfItem.ID], Bool) -> Void = { _, _ in }
     var onRemoveItem: @MainActor (TemporaryShelfItem.ID) -> Void = { _ in }
+    var onRemoveItems: @MainActor ([TemporaryShelfItem.ID]) -> Void = { _ in }
     var onClearItems: @MainActor () -> Void = {}
     var onDragStarted: @MainActor ([TemporaryShelfItem.ID]) -> Void = { _ in }
     var onDragCompleted: @MainActor ([TemporaryShelfItem.ID], Bool) -> Void = { _, _ in }
     var onFilterChange: @MainActor (TemporaryFileShelfFilter) -> Void = { _ in }
     var onClearSelection: @MainActor () -> Void = {}
+    var onAirDropItems: @MainActor ([TemporaryShelfItem.ID]) -> Void = { _ in }
+    var onUndoAirDropItems: @MainActor () -> Void = {}
+    var onOpenFilesPrimaryFeature: @MainActor () -> Void = {}
+    var onSetFilesDisplayMode: @MainActor (FilesDisplayMode) -> Void = { _ in }
     var onToggleOverlay: @MainActor () -> Void = {}
     var onDoneOverlay: @MainActor () -> Void = {}
 }

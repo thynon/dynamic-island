@@ -129,6 +129,206 @@ New events should use this shape:
   state signature cache, and restore the old core-check expectations if Tasks
   should return to debug-only status polling and rendering.
 
+### 2026-07-09 - files-manual-multi-selection
+- Reason: User clarified that batch delete should let the user choose specific
+  files, not automatically select every staged file.
+- Changed:
+  - `Sources/DynamicIsland/Views/FilesPrimaryContentView.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: The toolbar button left of trash now toggles multi-selection mode
+  only. While enabled, clicking file tiles toggles individual file selection
+  with a small check indicator; the trash button still deletes only the
+  selected temporary shelf URL references. The Files primary toolbar no longer
+  exposes a select-all batch action.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `git diff --check`; verified `checklist.checked` exists via
+  AppKit; `./script/build_and_run.sh` with debug staged files; CPU settled to
+  1.0% after launch.
+- Rollback: Restore `FilesSelectAllButton`, `toggleAllFileSelection()`, and the
+  `FilesPrimaryContentView` `onSelectItems` toolbar binding if select-all is
+  desired again.
+
+### 2026-07-09 - files-content-fade
+- Reason: User clarified that the `Files` open/close animation should apply to
+  the feature content area, not just the left icon.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: `FilesPrimaryContentView` now uses an opacity transition, and primary
+  feature selection changes animate against `selectedPrimaryFeature`, so the
+  AirDrop and file preview content fades in and out when `Files` opens or
+  closes.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `git diff --check`; `./script/build_and_run.sh` with debug
+  staged files; CPU settled to 2.1% after launch.
+- Rollback: Remove the `FilesPrimaryContentView` opacity transition and the
+  `selectedPrimaryFeature` animation binding from `IslandOverlayView`.
+
+### 2026-07-09 - files-select-all-and-icon-fade
+- Reason: User wanted the left `Files` icon open/close state to fade instead
+  of swapping abruptly, and wanted an explicit multi-select entry beside the
+  trash button for batch deletion.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Views/FilesPrimaryContentView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: The `Files` primary icon now cross-fades between outline and filled
+  tray symbols. The Files preview toolbar now has a select-all button to the
+  left of the trash button; it selects all staged files, toggles back to an
+  empty selection when all are selected, and keeps trash deletion scoped to
+  selected temporary shelf URL references only.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `git diff --check`; `./script/build_and_run.sh` with debug
+  staged files; CPU settled to 0.6% after launch.
+- Rollback: Restore the single conditional tray icon and remove
+  `FilesSelectAllButton` plus the `FilesPrimaryContentView` batch selection
+  binding.
+
+### 2026-07-09 - files-primary-feature-airdrop-preview
+- Reason: User wanted file staging to live in a separate left-safe-region
+  `Files` primary feature instead of inside `Tasks`, with the left content
+  region for AirDrop and the right region for file preview.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandPrimaryFeature.swift`
+  - `Sources/DynamicIsland/Views/FileShelfActions.swift`
+  - `Sources/DynamicIsland/Views/FilesPrimaryContentView.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: `Files` is now a real primary feature selected from the expanded
+  left safe band, while `Tasks/Data/Tools/Settings` stay in the right safe band.
+  Dropping files only stages in-memory URL references and does not expand or
+  switch the island to `Files`; clicking the left `Files` button opens that
+  feature and pins the island open. The content area shows a full-height gray
+  dashed AirDrop zone on the left and a full-height gray dashed file preview
+  zone on the right. AirDrop uses `NSSharingService(.sendViaAirDrop)` from the
+  app layer and sends selected/dragged staged files, or all staged files when
+  nothing is selected. Dragging files from the preview zone to external apps
+  exports real file URL pasteboard items. Files sent via AirDrop or successful
+  external drag are removed from the island. File Shelf storage remains
+  in-memory URL references only.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `git diff --check`; `./script/build_and_run.sh`; CPU settled
+  to 2.0% after launch.
+- Rollback: Remove the `files` primary feature case and
+  `FilesPrimaryContentView`, restore the old conditional `FileShelfButton`
+  overlay opener, and route file drops back to the independent overlay.
+
+### 2026-07-09 - files-balanced-dashed-frame
+- Reason: User reported the Files dashed regions did not look equally spaced
+  from the top and bottom content boundaries.
+- Changed:
+  - `Sources/DynamicIslandCore/IslandPrimaryContentLayout.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: `Files` now uses a dedicated `filesContentFrame` with a shared 8pt
+  vertical inset after the top status band and before the bottom edge, while
+  `Tasks` keeps its existing content frame.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `git diff --check`; `./script/build_and_run.sh`; CPU settled
+  to 1.4% after launch.
+- Rollback: Point `FilesPrimaryContentView` back to `tasksContentFrame` and
+  remove `filesContentFrame`.
+
+### 2026-07-09 - files-compact-button-and-airdrop-completion
+- Reason: User wanted the `Files` primary button to remove its text, show the
+  count as a badge, reduce drag lag, make the file name less intrusive, and
+  keep staged files when AirDrop is cancelled.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Views/FilesPrimaryContentView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: The `Files` button is now icon-only with a compact numeric badge.
+  The Files preview uses a smaller bottom-left caption for the name. Drag start
+  work is reduced by dragging only the current preview item unless a selection
+  is active and by reusing one drag icon. AirDrop now keeps files staged when
+  the share panel is opened or cancelled, and removes them only from the
+  successful `NSSharingServiceDelegate.didShareItems` callback.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `git diff --check`; `./script/build_and_run.sh`; CPU settled
+  to 1.6% after launch.
+- Rollback: Restore the previous `FilesPrimaryFeatureButton` label, previous
+  `filePreview` layout, previous multi-item default drag behavior, and direct
+  removal after `NSSharingService.perform`.
+
+### 2026-07-09 - files-grid-retained-airdrop-display-mode
+- Reason: User wanted the Files preview area to avoid horizontal piling, use a
+  two-dimensional arrangement with clearer spacing, keep staged files when
+  AirDrop is cancelled, and finish the long-lived display control idea.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayState.swift`
+  - `Sources/DynamicIsland/Views/FileShelfActions.swift`
+  - `Sources/DynamicIsland/Views/FilesPrimaryContentView.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: The right Files area now uses a horizontal `LazyHGrid` with explicit
+  horizontal inset and tile spacing, so staged files distribute across multiple
+  rows while the shelf scrolls left and right instead of vertically. AirDrop
+  marks staged files as pending so the drag-completion path cannot remove them
+  early.
+  The drag-completion path ignores pending AirDrop files so they are not
+  removed before the share flow resolves. AirDrop completion automatically
+  removes the staged files and shows a short undo affordance, avoiding a
+  manual confirmation step while still letting the user restore files if macOS
+  reports completion for a cancelled AirDrop flow. Files now has display modes:
+  auto close on mouse exit, pinned open, or keep open until the shelf is empty.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `git diff --check`; `./script/build_and_run.sh` with six
+  debug staged files; CPU settled to 3.0% after launch.
+- Rollback: Restore the single-preview Files layout, remove
+  `FilesDisplayMode`, route mouse exit back to `isFileShelfPinnedOpen`, remove
+  `pendingAirDropItemIDs`, and return AirDrop deletion to the previous strategy.
+
+### 2026-07-09 - files-selected-delete-toolbar
+- Reason: User wanted a delete function for the Files staging area without
+  crowding each file tile or interfering with drag gestures.
+- Changed:
+  - `Sources/DynamicIsland/Views/FileShelfActions.swift`
+  - `Sources/DynamicIsland/Views/FilesPrimaryContentView.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: The Files preview toolbar now has a trash icon beside the display
+  mode control. It is disabled until at least one file is selected, shows a
+  count badge for multi-selection, and removes only selected temporary shelf
+  URL references through a batch removal action. It does not delete real files
+  from disk and does not add per-tile delete controls.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `git diff --check`; `./script/build_and_run.sh` with six
+  debug staged files; CPU settled to 2.9% after launch.
+- Rollback: Remove `onRemoveItems`, `FilesDeleteSelectionButton`, and the
+  controller batch removal binding.
+
+### 2026-07-09 - files-icon-toggle
+- Reason: User wanted the left `Files` icon to open and close the Files
+  primary feature directly instead of needing to click a right-side primary
+  feature to switch away.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Clicking the `Files` icon now opens Files when closed and closes it
+  back to the last non-`Files` primary feature when already open, releasing the
+  pinned state. The icon also changes between outline and filled tray states to
+  make on/off visible.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `git diff --check`; `./script/build_and_run.sh` with six
+  debug staged files; CPU settled to 2.1% after launch.
+- Rollback: Remove `closeFilesPrimaryFeature()` and always route the icon click
+  through the previous open-only behavior.
+
 ### 2026-07-06 - Codex approval status badge
 - Reason: User wanted the reserved right side of each Tasks row hooked to Codex
   approval state.
