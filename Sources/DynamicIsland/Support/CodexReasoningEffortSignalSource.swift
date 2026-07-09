@@ -39,10 +39,18 @@ struct CodexReasoningEffortSignalSource {
     }
 
     func currentSignal() -> CodexReasoningEffortSignal {
-        if let signal = readCcSwitchRealtimeSignal() {
+        if let signal = currentRealtimeSignal() {
             return signal
         }
 
+        return currentFallbackSignal()
+    }
+
+    func currentRealtimeSignal() -> CodexReasoningEffortSignal? {
+        readCcSwitchRealtimeSignal()
+    }
+
+    func currentFallbackSignal() -> CodexReasoningEffortSignal {
         if fileManager.fileExists(atPath: codexStateDatabaseURL.path),
            let effort = readLatestCodexThreadEffort()
         {

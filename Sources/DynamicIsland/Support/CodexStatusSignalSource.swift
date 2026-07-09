@@ -47,6 +47,8 @@ final class CodexStatusSignalSource: @unchecked Sendable {
     private var cachedThreadRefreshDate: Date?
     private var cachedGlobalApprovalStates: [String: CodexTaskStatus.ApprovalState] = [:]
     private var cachedGlobalStateRefreshDate: Date?
+    private var cachedGlobalStateSignature: RolloutFileSignature?
+    private var cachedGlobalStateThreadIDs: Set<String> = []
     private var cachedRolloutStates: [String: CachedRolloutState] = [:]
 
     init(
@@ -385,14 +387,26 @@ final class CodexStatusSignalSource: @unchecked Sendable {
         now: Date
     ) -> [String: CodexTaskStatus.ApprovalState] {
         if let cachedGlobalStateRefreshDate,
-           now.timeIntervalSince(cachedGlobalStateRefreshDate) < globalStateRefreshInterval
+           now.timeIntervalSince(cachedGlobalStateRefreshDate) < globalStateRefreshInterval,
+           cachedGlobalStateThreadIDs == threadIDs
         {
+            return cachedGlobalApprovalStates
+        }
+
+        let signature = rolloutFileSignature(at: codexGlobalStateURL)
+        if cachedGlobalStateRefreshDate != nil,
+           cachedGlobalStateSignature == signature,
+           cachedGlobalStateThreadIDs == threadIDs
+        {
+            cachedGlobalStateRefreshDate = now
             return cachedGlobalApprovalStates
         }
 
         let states = readGlobalApprovalStates(threadIDs: threadIDs)
         cachedGlobalApprovalStates = states
         cachedGlobalStateRefreshDate = now
+        cachedGlobalStateSignature = signature
+        cachedGlobalStateThreadIDs = threadIDs
         return states
     }
 

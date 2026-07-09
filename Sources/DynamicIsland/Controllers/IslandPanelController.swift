@@ -25,6 +25,7 @@ final class IslandPanelController {
     private static let debugFileShelfURLsEnvironmentKey = "ISLAND_DEBUG_FILE_SHELF_URLS"
     private static let debugCalibrationEnvironmentKey = "ISLAND_DEBUG_CALIBRATION"
     private static let debugPrimaryFeatureFrameCaptureDirectoryEnvironmentKey = "ISLAND_DEBUG_PRIMARY_FEATURE_FRAME_CAPTURE_DIR"
+    private static let codexReasoningFallbackRefreshInterval: TimeInterval = 2
 
     private var metrics: NotchMetrics
     private var isExpanded = false
@@ -112,9 +113,7 @@ final class IslandPanelController {
             startMusicPlaybackPolling()
         }
         startCodexReasoningEffortPolling()
-        if runtimeSettings.isCalibrationModeEnabled {
-            startCodexStatusPolling()
-        }
+        startCodexStatusPolling()
         startTemporaryFileShelfPruning()
         observeRuntimeSettings()
     }
@@ -334,11 +333,6 @@ final class IslandPanelController {
 
         overlayState.isCalibrationOverlayVisible = calibrationModeEnabled
         overlayState.calibrationHasCameraHousing = Self.hasCameraHousing(on: NSScreen.main)
-        if calibrationModeEnabled {
-            startCodexStatusPolling()
-        } else {
-            stopCodexStatusPolling()
-        }
 
         interactionLogger.log("settings.changed", metadata: [
             "fileShelfEnabled": fileShelfEnabled,
@@ -1222,10 +1216,29 @@ final class IslandPanelController {
         codexReasoningEffortPollingTask?.cancel()
         codexReasoningEffortPollingTask = Task { [weak self] in
             var lastSignal: CodexReasoningEffortSignal?
+            var cachedFallbackSignal: CodexReasoningEffortSignal?
+            var lastFallbackRefreshDate: Date?
             while !Task.isCancelled {
-                let signal = await Task.detached(priority: .utility) {
-                    CodexReasoningEffortSignalSource().currentSignal()
+                let now = Date()
+                let shouldRefreshFallback = lastFallbackRefreshDate.map {
+                    now.timeIntervalSince($0) >= Self.codexReasoningFallbackRefreshInterval
+                } ?? true
+                let fallbackSignal = cachedFallbackSignal
+                let signal = await Task.detached(priority: .utility) { @Sendable in
+                    let signalSource = CodexReasoningEffortSignalSource()
+                    if let realtimeSignal = signalSource.currentRealtimeSignal() {
+                        return realtimeSignal
+                    }
+                    if !shouldRefreshFallback, let fallbackSignal {
+                        return fallbackSignal
+                    }
+                    return signalSource.currentFallbackSignal()
                 }.value
+
+                if signal.source != .ccSwitchRealtime {
+                    cachedFallbackSignal = signal
+                    lastFallbackRefreshDate = now
+                }
 
                 guard let self else { return }
                 if signal != lastSignal {

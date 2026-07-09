@@ -280,7 +280,7 @@ struct IslandOverlayView: View {
                 .allowsHitTesting(isExpanded)
                 .zIndex(4)
 
-            if isExpanded && state.selectedPrimaryFeature == .tasks && state.isCalibrationOverlayVisible {
+            if isExpanded && state.selectedPrimaryFeature == .tasks {
                 CodexTasksContentView(snapshot: state.codexStatusBarSnapshot)
                     .frame(width: primaryContentFrame.width, height: primaryContentFrame.height)
                     .position(x: primaryContentFrame.midX, y: primaryContentFrame.midY)

@@ -92,6 +92,43 @@ New events should use this shape:
 - Rollback:
 ```
 
+### 2026-07-09 - codex-tasks-normal-mode-polling
+- Reason: User reported the expanded `Tasks` feature was not showing Codex
+  session processes in the normal app launch, then clarified calibration mode
+  is only a layout-locking aid and must not gate feature visibility.
+- Changed:
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Sources/DynamicIsland/Support/CodexReasoningEffortSignalSource.swift`
+  - `Sources/DynamicIsland/Support/CodexStatusSignalSource.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Codex Tasks status polling now starts during normal app launch instead
+  of being tied to calibration/debug mode. The expanded `Tasks` primary feature
+  renders the Codex task list in normal mode; toggling calibration only shows or
+  hides the calibration overlay and no longer controls Tasks visibility or
+  clears the Tasks Codex snapshot. Follow-up performance tuning keeps realtime
+  reasoning polling responsive while throttling slower fallback sqlite/config
+  reads to 2 seconds, and caches global approval state by file signature plus
+  visible thread IDs so unchanged `.codex-global-state.json` is not rescanned on
+  each status tick.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `./script/build_and_run.sh --verify`. Latest normal-mode log
+  had `calibrationOverlay:false` and `codex.status.changed` with
+  `runningTasks:2`. Before tuning, a 60-second sample averaged 2.62% CPU with a
+  6.10% max and `sample` showed frequent reasoning fallback sqlite/global state
+  scanning. After tuning, `/tmp/dynamic-island-perf-20260709-175908.tsv`
+  averaged 1.03% CPU over 30 samples with a 7.10% transient max and 67.8 MB RSS;
+  `/tmp/dynamic-island-sample-20260709-180018.txt` showed the remaining cost
+  mainly in active rollout tail reads and the 5-second status thread sqlite
+  refresh.
+- Rollback: Gate `startCodexStatusPolling()` behind
+  `runtimeSettings.isCalibrationModeEnabled` again in `IslandPanelController`,
+  restore the `state.isCalibrationOverlayVisible` condition around
+  `CodexTasksContentView`, remove the reasoning fallback throttle and global
+  state signature cache, and restore the old core-check expectations if Tasks
+  should return to debug-only status polling and rendering.
+
 ### 2026-07-06 - Codex approval status badge
 - Reason: User wanted the reserved right side of each Tasks row hooked to Codex
   approval state.
