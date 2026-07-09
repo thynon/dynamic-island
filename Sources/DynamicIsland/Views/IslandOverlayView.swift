@@ -7,6 +7,8 @@ struct IslandOverlayView: View {
     @ObservedObject var state: IslandOverlayState
     let onExpansionChange: @MainActor (Bool) -> Void
     let fileShelfActions: FileShelfActions
+    @State private var isTopBandEnergyActive = false
+    @State private var topBandEnergyActivationSequence = 0
 
     private let animationProfile = IslandAnimationProfile.default
     private let musicSkipIconSize: CGFloat = 18
@@ -199,6 +201,24 @@ struct IslandOverlayView: View {
         metrics.expandedTopStatusBandLayout.primaryNavigationFrame(width: 168, height: 22)
     }
 
+    private var primaryContentFrame: CGRect {
+        metrics.expandedPrimaryContentLayout.tasksContentFrame
+    }
+
+    private var topBandEnergyFrame: CGRect {
+        let layout = metrics.expandedTopStatusBandLayout
+        return CGRect(
+            x: layout.rightInfoRegion.minX,
+            y: 0,
+            width: metrics.openWidth - layout.rightInfoRegion.minX,
+            height: layout.bandHeight
+        )
+    }
+
+    private var topBandEnergyActivationDelay: TimeInterval {
+        animationProfile.expandResponse + 0.08
+    }
+
     private var primaryFeatureEntranceOffsetY: CGFloat {
         primaryNavigationFrame.height + metrics.openTopCornerRadius
     }
@@ -242,6 +262,14 @@ struct IslandOverlayView: View {
         ZStack(alignment: .topLeading) {
             shellFillColor
 
+            if isExpanded && state.isTopBandEnergyEffectEnabled && isTopBandEnergyActive {
+                TopBandEnergyEffectView()
+                    .frame(width: topBandEnergyFrame.width, height: topBandEnergyFrame.height)
+                    .position(x: topBandEnergyFrame.midX, y: topBandEnergyFrame.midY)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+
             PrimaryFeatureSwitcher(
                 selection: $state.selectedPrimaryFeature,
                 isExpanded: isExpanded,
@@ -251,6 +279,14 @@ struct IslandOverlayView: View {
                 .position(x: primaryNavigationFrame.midX, y: primaryNavigationFrame.midY)
                 .allowsHitTesting(isExpanded)
                 .zIndex(4)
+
+            if isExpanded && state.selectedPrimaryFeature == .tasks && state.isCalibrationOverlayVisible {
+                CodexTasksContentView(snapshot: state.codexStatusBarSnapshot)
+                    .frame(width: primaryContentFrame.width, height: primaryContentFrame.height)
+                    .position(x: primaryContentFrame.midX, y: primaryContentFrame.midY)
+                    .allowsHitTesting(false)
+                    .zIndex(21)
+            }
 
             if isExpanded, state.temporaryFileShelf.hasItems {
                 FileShelfButton(
@@ -376,6 +412,28 @@ struct IslandOverlayView: View {
             .animation(.easeOut(duration: 0.14), value: state.isHovered)
             .animation(.easeOut(duration: 0.14), value: state.isFileDropTargetActive)
             .animation(.easeOut(duration: 0.14), value: state.isFileShelfOverlayVisible)
+            .onAppear {
+                scheduleTopBandEnergyActivation(expanded: isExpanded && state.isTopBandEnergyEffectEnabled)
+            }
+            .onChange(of: isExpanded) { _, expanded in
+                scheduleTopBandEnergyActivation(expanded: expanded && state.isTopBandEnergyEffectEnabled)
+            }
+            .onChange(of: state.isTopBandEnergyEffectEnabled) { _, isEnabled in
+                scheduleTopBandEnergyActivation(expanded: isExpanded && isEnabled)
+            }
+    }
+
+    private func scheduleTopBandEnergyActivation(expanded: Bool) {
+        topBandEnergyActivationSequence += 1
+        let sequence = topBandEnergyActivationSequence
+        isTopBandEnergyActive = false
+
+        guard expanded else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + topBandEnergyActivationDelay) {
+            guard sequence == topBandEnergyActivationSequence, state.isExpanded else { return }
+            isTopBandEnergyActive = true
+        }
     }
 }
 

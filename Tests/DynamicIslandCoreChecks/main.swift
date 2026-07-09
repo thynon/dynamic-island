@@ -44,7 +44,9 @@ private func islandOverlaySources() -> String {
         "Sources/DynamicIsland/Views/IslandOverlayView.swift",
         "Sources/DynamicIsland/Views/IslandOverlayState.swift",
         "Sources/DynamicIsland/Views/IslandPrimaryFeature.swift",
-        "Sources/DynamicIsland/Views/FileShelfActions.swift"
+        "Sources/DynamicIsland/Views/FileShelfActions.swift",
+        "Sources/DynamicIsland/Views/CodexTasksContentView.swift",
+        "Sources/DynamicIsland/Views/CodexStatusBarView.swift"
     ].map(source).joined(separator: "\n")
 }
 
@@ -327,6 +329,147 @@ private func testTemporaryFileShelfCoreModel() {
     expectEqual(selection.selectedItemIDs, [], "temporary file shelf selection drops IDs removed by batch deletion")
 }
 
+private func testCodexReasoningEffortParsingAndTriggerPolicy() {
+    let codexConfig = """
+    model_provider = "custom"
+    model = "gpt-5.5"
+    model_reasoning_effort = "xhigh"
+    """
+    expectEqual(
+        CodexReasoningEffort.fromCodexConfig(codexConfig),
+        .xhigh,
+        "Codex config parser reads xhigh model reasoning effort"
+    )
+    expectEqual(
+        CodexReasoningEffort.fromCodexConfig("model_reasoning_effort = \"high\"")?.triggersEnergyTail,
+        false,
+        "high reasoning does not trigger the top-band energy tail"
+    )
+    expectEqual(
+        CodexReasoningEffort.fromCodexConfig("model_reasoning_effort = \"max\"")?.triggersEnergyTail,
+        true,
+        "max reasoning triggers the top-band energy tail"
+    )
+    expectEqual(
+        CodexReasoningEffort.fromCodexConfig("model_reasoning_effort = \"x-high\""),
+        .xhigh,
+        "Codex config parser accepts the x-high spelling"
+    )
+
+    let ccSwitchSettingsConfig = """
+    {
+      "auth": {"OPENAI_API_KEY": "redacted"},
+      "config": "model_provider = \\"custom\\"\\nmodel_reasoning_effort = \\"xhigh\\"\\n"
+    }
+    """
+    expectEqual(
+        CodexReasoningEffort.fromCcSwitchProviderSettingsConfig(ccSwitchSettingsConfig),
+        .xhigh,
+        "CcSwitch provider settings parser reads the embedded Codex config"
+    )
+    expectEqual(
+        CodexReasoningEffort.fromReasoningEffortValue("X High"),
+        .xhigh,
+        "reasoning effort parser accepts UI-style X High spelling"
+    )
+    expectEqual(
+        CodexReasoningEffort.fromReasoningEffortValue("off")?.triggersEnergyTail,
+        nil,
+        "disabled realtime reasoning effort does not parse as an active effort"
+    )
+}
+
+private func testCodexStatusBarContracts() {
+    let snapshot = source("Sources/DynamicIslandCore/CodexStatusBarSnapshot.swift")
+    let topBandLayout = source("Sources/DynamicIslandCore/IslandTopStatusBandLayout.swift")
+    let primaryContentLayout = source("Sources/DynamicIslandCore/IslandPrimaryContentLayout.swift")
+    let signalSource = source("Sources/DynamicIsland/Support/CodexStatusSignalSource.swift")
+    let statusBarView = source("Sources/DynamicIsland/Views/CodexStatusBarView.swift")
+    let tasksContentView = source("Sources/DynamicIsland/Views/CodexTasksContentView.swift")
+    let overlay = islandOverlaySources()
+    let controller = source("Sources/DynamicIsland/Controllers/IslandPanelController.swift")
+
+    expectEqual(snapshot.contains("public struct CodexStatusBarSnapshot"), true, "Codex status bar snapshot lives in the core layer")
+    expectEqual(snapshot.contains("public struct CodexTaskStatus"), true, "Codex task rows have a core snapshot model")
+    expectEqual(snapshot.contains("public enum ActivityState"), true, "Codex status bar snapshot models visible activity states")
+    expectEqual(snapshot.contains("public enum ApprovalState"), true, "Codex task rows model right-side approval state")
+    expectEqual(snapshot.contains("public let approvalState: ApprovalState"), true, "Codex task rows carry approval state for the reserved right slot")
+    expectEqual(snapshot.contains("public let tasks: [CodexTaskStatus]"), true, "Codex status snapshot can carry several Codex tasks")
+    expectEqual(snapshot.contains("formattedElapsedTime"), true, "Codex status snapshot owns elapsed-time formatting")
+    expectEqual(snapshot.contains("formattedTokenCount"), true, "Codex status snapshot owns token-count formatting")
+    expectEqual(snapshot.contains("runningTasksText"), true, "Codex status snapshot owns running task copy")
+
+    expectEqual(topBandLayout.contains("codexStatusFrame"), false, "Codex status no longer lives in the top green safe region")
+    expectEqual(primaryContentLayout.contains("public struct IslandPrimaryContentLayout"), true, "expanded shell exposes a primary content layout contract")
+    expectEqual(primaryContentLayout.contains("tasksContentFrame"), true, "primary content layout exposes the white-box Tasks content frame")
+    expectEqual(primaryContentLayout.contains("metrics.closedHeight + 8"), true, "Tasks content starts below the top 32pt status band")
+    expectEqual(primaryContentLayout.contains("metrics.expandedHorizontalContentPadding"), true, "Tasks content avoids rounded top corners")
+
+    expectEqual(signalSource.contains("final class CodexStatusSignalSource"), true, "app layer owns a reusable local Codex status reader")
+    expectEqual(signalSource.contains("threadRefreshInterval"), true, "Codex status source does not spawn sqlite for every UI poll")
+    expectEqual(signalSource.contains("completedTaskRetentionDuration: TimeInterval = 10"), true, "completed Codex tasks stay visible for only 10 seconds")
+    expectEqual(signalSource.contains("rolloutFastTailMaximumBytes"), true, "Codex status source keeps a small fast rollout tail read")
+    expectEqual(signalSource.contains("rolloutExpandedTailMaximumBytes"), true, "Codex status source can expand the rollout tail when task boundaries are missing")
+    expectEqual(signalSource.contains("needsExpandedTailRead"), true, "Codex status source detects active-looking tails without task boundaries")
+    expectEqual(signalSource.contains("readRecentLines(from: url, maximumBytes:"), true, "Codex status source passes an explicit rollout tail byte budget")
+    expectEqual(signalSource.contains("cachedRolloutStates"), true, "Codex status source caches parsed rollout state between file changes")
+    expectEqual(signalSource.contains("rolloutFileSignature"), true, "Codex status source keys rollout cache by file size and modification time")
+    expectEqual(signalSource.contains(".codex/state_5.sqlite"), true, "Codex status source reads Codex's local thread database")
+    expectEqual(signalSource.contains("tokens_used"), true, "Codex status source reads stored thread token totals")
+    expectEqual(signalSource.contains("LIMIT 4"), true, "Codex status source reads a bounded set of recent tasks")
+    expectEqual(signalSource.contains("token_count"), true, "Codex status source reads rollout token_count events")
+    expectEqual(signalSource.contains("task_started"), true, "Codex status source detects active Codex turns")
+    expectEqual(signalSource.contains("task_complete"), true, "Codex status source detects completed Codex turns")
+    expectEqual(signalSource.contains("item/commandExecution/requestApproval"), true, "Codex status source detects command approval requests")
+    expectEqual(signalSource.contains("item/fileChange/requestApproval"), true, "Codex status source detects file-change approval requests")
+    expectEqual(signalSource.contains("item/permissions/requestApproval"), true, "Codex status source detects permission approval requests")
+    expectEqual(signalSource.contains("waitingOnApproval"), true, "Codex status source can read persisted active approval flags")
+    expectEqual(signalSource.contains("isTaskVisible"), true, "Codex status source filters expired completed tasks")
+    expectEqual(signalSource.contains("now.timeIntervalSince1970 - completedAt <= completedTaskRetentionDuration"), true, "completed task visibility uses the 10-second retention window")
+    expectEqual(signalSource.contains("threadTitle"), true, "Codex status source keeps thread title for debug-only UI")
+
+    expectEqual(tasksContentView.contains("struct CodexTasksContentView"), true, "Tasks primary feature renders Codex task content in the main content area")
+    expectEqual(tasksContentView.contains("approvalSlotWidth"), true, "task rows reserve right-side space for future approval controls")
+    expectEqual(tasksContentView.contains("statusColumnWidth"), true, "task rows keep a stable status column")
+    expectEqual(tasksContentView.contains("statusColumnWidth: CGFloat = 260"), true, "status column is wide enough to show Running tool without truncation")
+    expectEqual(tasksContentView.contains("approvalSlotWidth: CGFloat = 68"), true, "approval placeholder stays reserved without squeezing status text")
+    expectEqual(tasksContentView.contains("rowHeight"), true, "task rows adapt height for one, two, or several tasks")
+    expectEqual(tasksContentView.contains("prefix(maxVisibleTaskCount)"), true, "Tasks content caps visible rows to prevent overflow")
+    expectEqual(tasksContentView.contains("snapshot.tasks"), true, "Tasks content renders only currently visible Codex tasks")
+    expectEqual(tasksContentView.contains("CodexTaskStatus("), false, "Tasks content does not synthesize a fake row after completed tasks expire")
+    expectEqual(statusBarView.contains("lineLimit(1)"), true, "Tasks content truncates long task names instead of overflowing")
+    expectEqual(statusBarView.contains("struct CodexStatusBarView"), true, "single task row rendering remains isolated")
+    expectEqual(statusBarView.contains("ProgressView"), false, "Codex status bar avoids an always-animating SwiftUI progress spinner")
+    expectEqual(statusBarView.contains("repeatForever"), false, "Codex status bar avoids continuous SwiftUI animation")
+    expectEqual(statusBarView.contains("formattedElapsedTime"), true, "Codex status bar uses the core elapsed-time formatter")
+    expectEqual(statusBarView.contains("formattedTokenCount"), true, "Codex status bar uses the core token formatter")
+    expectEqual(statusBarView.contains("approvalBadge"), true, "Codex status bar renders the reserved approval slot as a status badge")
+    expectEqual(statusBarView.contains("Button("), false, "Codex approval hook only displays pending approval and does not approve from the island")
+    expectEqual(statusBarView.contains("task.approvalState.displayText"), true, "approval badge text comes from the core task state")
+    expectEqual(statusBarView.contains("return 9.5"), true, "status text uses compact type so Running tool fits in the status column")
+    let activityIndex = statusBarView.range(of: "task.activityState.displayText")?.lowerBound
+    let elapsedIndex = statusBarView.range(of: "task.formattedElapsedTime")?.lowerBound
+    expectEqual(
+        activityIndex != nil && elapsedIndex != nil && activityIndex! < elapsedIndex!,
+        true,
+        "status text starts with the activity so it is not the first part truncated"
+    )
+
+    expectEqual(overlay.contains("@Published var codexStatusBarSnapshot"), true, "overlay state publishes the Codex status bar snapshot")
+    expectEqual(overlay.contains("CodexTasksContentView"), true, "expanded Tasks feature renders the Codex task list")
+    expectEqual(overlay.contains("primaryContentFrame"), true, "Codex task list uses the primary content frame")
+    expectEqual(overlay.contains("state.selectedPrimaryFeature == .tasks"), true, "Codex task list is scoped to the Tasks primary feature")
+    expectEqual(overlay.contains("codexStatusFrame"), false, "Codex task list is not positioned in the top status band")
+
+    expectEqual(controller.contains("startCodexStatusPolling"), true, "panel can poll local Codex status")
+    expectEqual(controller.contains("stopCodexStatusPolling"), true, "panel can stop Codex status polling when debug mode is off")
+    expectEqual(controller.contains("runtimeSettings.isCalibrationModeEnabled"), true, "Codex status polling is tied to calibration debug mode")
+    expectEqual(controller.contains("let codexStatusSignalSource = CodexStatusSignalSource()"), true, "panel reuses one Codex status source while polling")
+    expectEqual(controller.contains("codexStatusSignalSource.currentSnapshot()"), true, "panel reads snapshots through the dedicated Codex status source")
+    expectEqual(controller.contains("1_000_000_000"), true, "Codex status polling uses a conservative low-overhead interval")
+    expectEqual(controller.contains("\"threadTitle\""), false, "Codex status logs do not write raw Codex thread titles")
+}
+
 private func testTemporaryFileShelfExpandedDropIntegration() {
     let overlay = islandOverlaySources()
     let controller = source("Sources/DynamicIsland/Controllers/IslandPanelController.swift")
@@ -334,6 +477,9 @@ private func testTemporaryFileShelfExpandedDropIntegration() {
     let shelfView = source("Sources/DynamicIsland/Views/FileShelfOverlayView.swift")
     let shelfStore = source("Sources/DynamicIsland/Support/TemporaryFileShelfStore.swift")
     let topBandLayout = source("Sources/DynamicIslandCore/IslandTopStatusBandLayout.swift")
+    let topBandEnergyEffect = source("Sources/DynamicIsland/Views/TopBandEnergyEffectView.swift")
+    let reasoningSignal = source("Sources/DynamicIsland/Support/CodexReasoningEffortSignalSource.swift")
+    let reasoningEffort = source("Sources/DynamicIslandCore/CodexReasoningEffort.swift")
 
     expectEqual(shelfStore.contains("@MainActor"), true, "temporary file shelf store stays on the main actor for UI state")
     expectEqual(shelfStore.contains("final class TemporaryFileShelfStore"), true, "temporary file shelf uses a dedicated in-memory app store")
@@ -391,6 +537,7 @@ private func testTemporaryFileShelfExpandedDropIntegration() {
     expectEqual(overlay.contains("@Published var temporaryFileShelfFilter"), true, "overlay state publishes file shelf filter state")
     expectEqual(overlay.contains("enum IslandPrimaryFeature"), true, "overlay models the expanded shell's top-level features")
     expectEqual(overlay.contains("@Published var selectedPrimaryFeature: IslandPrimaryFeature = .tasks"), true, "overlay state publishes the selected top-level feature")
+    expectEqual(overlay.contains("@Published var isTopBandEnergyEffectEnabled = false"), true, "overlay state gates the top-band energy effect from Codex reasoning effort")
     expectEqual(overlay.contains("state.isFileDropTargetActive && !isExpanded"), true, "closed shell uses drop targeting for hover-like file drag feedback")
     expectEqual(overlay.contains("FileShelfOverlayView"), true, "expanded overlay renders the file shelf as an independent overlay")
     expectEqual(overlay.contains("state.isFileShelfOverlayVisible"), true, "file shelf is not always mounted in expanded content")
@@ -399,13 +546,52 @@ private func testTemporaryFileShelfExpandedDropIntegration() {
     expectEqual(topBandLayout.contains("primaryNavigationFrame"), true, "top status band exposes a frame for the primary feature switcher")
     expectEqual(topBandLayout.contains("rightInfoRegion.maxX - resolvedWidth"), true, "primary feature switcher is anchored in the blue right safe region")
     expectEqual(overlay.contains("PrimaryFeatureSwitcher"), true, "expanded overlay renders the primary feature switcher")
+    expectEqual(overlay.contains("TopBandEnergyEffectView"), true, "expanded overlay renders the energy effect in the top status band")
+    expectEqual(overlay.contains("@State private var isTopBandEnergyActive = false"), true, "top band energy effect is delayed until expansion settles")
+    expectEqual(overlay.contains("if isExpanded && state.isTopBandEnergyEffectEnabled && isTopBandEnergyActive"), true, "top band energy effect is not mounted unless xhigh reasoning is active and expansion has settled")
+    expectEqual(overlay.contains("scheduleTopBandEnergyActivation"), true, "top band energy effect uses a dedicated activation delay")
+    expectEqual(overlay.contains("topBandEnergyFrame"), true, "top band energy effect uses a dedicated top status band frame")
+    expectEqual(overlay.contains("layout.rightInfoRegion.minX"), true, "top band energy effect starts at the debug blue right safe region")
+    expectEqual(overlay.contains("metrics.openWidth - layout.rightInfoRegion.minX"), true, "top band energy effect fills the whole area to the right edge")
+    expectEqual(overlay.contains(".allowsHitTesting(false)"), true, "top band energy effect does not intercept primary feature clicks")
+    expectEqual(topBandEnergyEffect.contains("MTKView"), true, "top band energy effect uses a Metal view for the pixel field")
+    expectEqual(topBandEnergyEffect.contains("preferredFramesPerSecond = 12"), true, "top band energy effect keeps animation cadence modest")
+    expectEqual(topBandEnergyEffect.contains("metalView.isPaused = true"), true, "top band energy effect avoids an always-on Metal display link")
+    expectEqual(topBandEnergyEffect.contains("renderTimer"), true, "top band energy effect uses an explicit low-frequency render timer")
+    expectEqual(topBandEnergyEffect.contains("override func hitTest"), true, "top band energy effect refuses AppKit hit testing")
+    expectEqual(topBandEnergyEffect.contains("cornerRadius"), false, "top band energy effect does not add its own rounded ends")
+    expectEqual(topBandEnergyEffect.contains("trackHostView.layer?.masksToBounds = true"), true, "top band energy effect clips to the rectangular right region")
+    expectEqual(topBandEnergyEffect.contains("metalView.layer?.masksToBounds = true"), true, "top band energy Metal layer clips to the rectangular right region")
+    expectEqual(topBandEnergyEffect.contains("energyTailOriginX = 1.0"), true, "top band energy effect keeps the bright origin on the right side")
+    expectEqual(topBandEnergyEffect.contains("didFireInitialBurst"), true, "top band energy effect defers the first burst until layout resolves")
+    expectEqual(topBandEnergyEffect.contains("cssSize.x > 8"), true, "top band energy effect does not fire particles while the view still has its default tiny size")
+    expectEqual(topBandEnergyEffect.contains("guard didFireInitialBurst else { return }"), true, "top band energy effect does not run auto bursts before the right-side first burst")
+    expectEqual(topBandEnergyEffect.contains("v_uv.x / max(u_pos * resolution.x"), true, "top band energy effect fades from right to left")
+    expectEqual(reasoningEffort.contains("public enum CodexReasoningEffort"), true, "Codex reasoning effort parsing is kept in the core layer")
+    expectEqual(reasoningEffort.contains("fromCodexConfig"), true, "core parser can read model_reasoning_effort from Codex TOML")
+    expectEqual(reasoningEffort.contains("fromCcSwitchProviderSettingsConfig"), true, "core parser can read CcSwitch provider settings without exposing auth data")
+    expectEqual(reasoningSignal.contains("CodexReasoningEffortSignalSource"), true, "app layer owns the local CcSwitch/config file reader")
+    expectEqual(reasoningSignal.contains("ccSwitchRealtimeSignalRelativePath"), true, "reasoning source checks the CcSwitch realtime request signal first")
+    expectEqual(reasoningSignal.contains("realtimeSignalMaximumAge"), true, "reasoning source ignores stale realtime request signals")
+    expectEqual(reasoningSignal.contains("CodexReasoningEffort.fromReasoningEffortValue"), true, "reasoning source parses per-request effort values from realtime JSON")
+    expectEqual(reasoningSignal.contains("active == false"), true, "inactive realtime request signals turn off the energy effect")
+    expectEqual(reasoningSignal.contains("codexStateDatabaseRelativePath"), true, "reasoning source reads the Codex local thread database")
+    expectEqual(reasoningSignal.contains(".codex/state_5.sqlite"), true, "reasoning source uses Codex's real state database")
+    expectEqual(reasoningSignal.contains("reasoning_effort"), true, "reasoning source reads the persisted Codex thread effort")
+    expectEqual(reasoningSignal.contains(".codexState"), true, "reasoning source reports when Codex state provides the effort signal")
+    expectEqual(reasoningSignal.contains(".cc-switch/cc-switch.db"), true, "reasoning source checks the local CcSwitch database first")
+    expectEqual(reasoningSignal.contains(".codex/config.toml"), true, "reasoning source falls back to the Codex config file last")
+    expectEqual(reasoningSignal.contains("json_extract(settings_config, '$.config')"), true, "reasoning source queries only the embedded provider config from CcSwitch")
+    expectEqual(controller.contains("startCodexReasoningEffortPolling"), true, "panel polls Codex reasoning effort at low frequency")
+    expectEqual(controller.contains("overlayState.isTopBandEnergyEffectEnabled = signal.triggersEnergyTail"), true, "panel toggles the energy effect from xhigh/max reasoning")
+    expectEqual(controller.contains("200_000_000"), true, "panel polls realtime Codex reasoning signal responsively without a display-link loop")
     expectEqual(overlay.contains("private var primaryFeatureEntranceLayer: some View"), false, "primary feature switcher stays inside the shell instead of using an external stable layer")
     expectEqual(overlay.contains("private var primaryFeatureEntranceClipShape: IslandShape"), false, "primary feature switcher does not keep the reverted external clipping shape")
-    expectEqual(overlay.contains("PrimaryFeatureSwitcher(selection: $state.selectedPrimaryFeature)"), true, "primary feature switcher stays a pure button group")
-    expectEqual(overlay.contains("ForEach(IslandPrimaryFeature.allCases)"), true, "primary feature switcher renders features in stable enum order")
+    expectEqual(overlay.contains("selection: $state.selectedPrimaryFeature"), true, "primary feature switcher stays a pure button group")
+    expectEqual(overlay.contains("IslandPrimaryFeature.allCases.enumerated()"), true, "primary feature switcher renders features in stable enum order")
     expectEqual(overlay.contains("private var primaryFeatureEntranceOffsetY: CGFloat"), true, "primary feature group owns a whole-group vertical entrance offset")
     expectEqual(overlay.contains("primaryNavigationFrame.height + metrics.openTopCornerRadius"), true, "primary feature group starts from a top-side path")
-    expectEqual(overlay.contains(".offset(y: isExpanded ? 0 : -primaryFeatureEntranceOffsetY)"), true, "primary feature group moves as one unit from top to bottom")
+    expectEqual(overlay.contains(".offset(y: isExpanded ? 0 : -primaryFeatureEntranceOffsetY)"), false, "top band energy effect does not move the primary feature group")
     expectEqual(overlay.contains(".offset(x: isExpanded ? 0 : -primaryFeatureEntranceOffset)"), false, "primary feature group no longer enters from the left")
     expectEqual(overlay.contains(".opacity(isExpanded ? 1 : 0)"), true, "primary feature group fades as one unit")
     expectEqual(overlay.contains(".animation(featureEntranceAnimation(index: index), value: isExpanded)"), true, "primary feature buttons use per-button staggered entrance animation")
@@ -897,6 +1083,8 @@ testMusicSkipGestureStateMachineLocksDirectionAndCancelsRollback()
 testDisplayProfileDerivesMetricsFromScreenSignature()
 testReleaseDisplayAdaptationMatrixAndLeanContracts()
 testTemporaryFileShelfCoreModel()
+testCodexReasoningEffortParsingAndTriggerPolicy()
+testCodexStatusBarContracts()
 testTemporaryFileShelfExpandedDropIntegration()
 testInteractionLoggingContract()
 testCurrentShellSourceContracts()

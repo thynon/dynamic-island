@@ -92,7 +92,246 @@ New events should use this shape:
 - Rollback:
 ```
 
+### 2026-07-06 - Codex approval status badge
+- Reason: User wanted the reserved right side of each Tasks row hooked to Codex
+  approval state.
+- Changed:
+  - `Sources/DynamicIslandCore/CodexStatusBarSnapshot.swift`
+  - `Sources/DynamicIsland/Support/CodexStatusSignalSource.swift`
+  - `Sources/DynamicIsland/Views/CodexStatusBarView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+- Result: Codex task rows now carry an approval state. The status source
+  recognizes command, file-change, and permission approval request method names,
+  plus persisted `waitingOnApproval` active flags when Codex exposes them. The
+  right-side reserved slot renders a compact display-only badge and does not
+  approve or reject from the island.
+- Verification:
+  - `swift run DynamicIslandCoreChecks`: passed.
+  - `swift build --product DynamicIsland`: passed.
+  - `./script/build_and_run.sh --debug-calibration`: launched.
+  - `ISLAND_DEBUG_PRIMARY_FEATURE_FRAME_CAPTURE_DIR=/tmp/dynamic-island-approval-capture ./script/build_and_run.sh --debug-calibration`: captured 25 frames.
+  - CPU after launch settled around 1.1%-2.3% in short samples.
+- Rollback: Remove `ApprovalState` from `CodexTaskStatus`, delete approval
+  parsing and global-state approval fallback from `CodexStatusSignalSource`,
+  and restore the clear right-side slot in `CodexStatusBarView`.
+
+### 2026-07-06 - codex-tasks-long-rollout-read
+- Reason: User reported one active Codex session was not appearing in the
+  `Tasks` list.
+- Changed:
+  - `Sources/DynamicIsland/Support/CodexStatusSignalSource.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: The Tasks status reader still performs a small 128KB rollout tail read
+  first. When that tail contains activity but no `task_started` or
+  `task_complete` boundary, it expands to an 8MB read and caches parsed rollout
+  state by file size and modification time. Long sessions with large reasoning
+  JSONL lines now remain visible without repeatedly reparsing unchanged files.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `./script/build_and_run.sh --debug-calibration`; `git diff
+  --check`. Latest debug log showed `runningTasks: 2`; CPU sampled at 2.3%
+  after launch.
+- Rollback: Remove the expanded-tail fallback and rollout cache, and restore the
+  previous single `rolloutTailMaximumBytes` read if Codex rollout files become
+  small and boundary events are always in the fast tail.
+
+### 2026-07-06 - codex-effort-state-source
+- Reason: User clarified that the top-band energy effect must read Codex's real
+  effort state, with config treated only as the last fallback.
+- Changed:
+  - `Sources/DynamicIsland/Support/CodexReasoningEffortSignalSource.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: The reasoning effort signal source now reads
+  `~/.codex/state_5.sqlite` and uses the latest non-archived
+  `threads.reasoning_effort` value before falling back to CcSwitch provider
+  config and finally `~/.codex/config.toml`. `xhigh` and `max` still gate the
+  top-band energy effect.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `./script/build_and_run.sh`; `git diff --check`; CPU sampled
+  at 0.8% shortly after launch.
+- Rollback: Remove the `codexState` source and
+  `readLatestCodexThreadEffort()` from `CodexReasoningEffortSignalSource`, then
+  restore the previous CcSwitch/config-only ordering.
+
 ## Recent Events
+
+### 2026-07-06 - tasks-status-text-priority
+- Reason: User asked whether only `Running tool` was fixed; the underlying
+  issue was that activity state text was placed after elapsed time and token
+  counts, so any long row could truncate the activity first.
+- Changed:
+  - `Sources/DynamicIsland/Views/CodexStatusBarView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Task status text now starts with the activity label, then elapsed
+  time and token count. This prioritizes visible states such as `Running tool`,
+  `Compacting conversation`, `Retrying`, `Responding`, and `Thinking`; if a
+  row still runs out of space, trailing metrics are truncated before the
+  activity label.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `./script/build_and_run.sh --debug-calibration`; CPU sampled
+  at 2.9% after launch.
+- Rollback: Restore `CodexStatusBarView.statusText` to the previous
+  `elapsed · tokens · activity` ordering and remove the ordering assertion.
+
+### 2026-07-06 - tasks-status-column-width-fix
+- Reason: User noticed the middle task status text such as `Running tool` was
+  truncated in the Tasks list.
+- Changed:
+  - `Sources/DynamicIsland/Views/CodexTasksContentView.swift`
+  - `Sources/DynamicIsland/Views/CodexStatusBarView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: The status column widened from 190pt to 260pt, the future approval
+  placeholder narrowed from 84pt to 68pt, and status text now uses compact
+  9.5pt type. Task names remain the flexible/truncated column, so status text
+  gets priority and `Running tool` has enough room.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; debug calibration frame capture attempted after launch, but
+  no active task row was visible because completed tasks had already expired.
+- Rollback: Restore `statusColumnWidth` to 190, `approvalSlotWidth` to 84, and
+  the previous dynamic status font size in `CodexStatusBarView`.
+
+### 2026-07-06 - completed-codex-task-expiry
+- Reason: User wanted completed Codex task rows in the `Tasks` primary content
+  list to close automatically after a short grace period instead of lingering.
+- Changed:
+  - `Sources/DynamicIsland/Support/CodexStatusSignalSource.swift`
+  - `Sources/DynamicIsland/Views/CodexTasksContentView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Running Codex tasks remain visible. Completed tasks remain visible
+  for `10` seconds after `task_complete`, then are filtered out of
+  `snapshot.tasks`. The Tasks content view now renders only visible tasks and
+  does not synthesize a fake fallback row after completed sessions expire.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `./script/build_and_run.sh --debug-calibration`; CPU sampled
+  at 2.4% after settling.
+- Rollback: Remove `completedTaskRetentionDuration` and `isTaskVisible` from
+  `CodexStatusSignalSource`, restore direct mapping from recent threads to
+  tasks, and restore the previous fallback row in `CodexTasksContentView` if a
+  persistent idle row is desired.
+
+### 2026-07-05 - tasks-codex-status-content-layout
+- Reason: User clarified the Codex status display should live in the expanded
+  `Tasks` primary feature's main white-box content area, not in the top green
+  calibration safe region. Task rows need a stable `task name | status |
+  reserved approval slot` structure that adapts for one, two, and several
+  concurrent Codex tasks without clipping or overlap.
+- Changed:
+  - `Sources/DynamicIslandCore/IslandPrimaryContentLayout.swift`
+  - `Sources/DynamicIslandCore/CodexStatusBarSnapshot.swift`
+  - `Sources/DynamicIsland/Support/CodexStatusSignalSource.swift`
+  - `Sources/DynamicIsland/Views/CodexTasksContentView.swift`
+  - `Sources/DynamicIsland/Views/CodexStatusBarView.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIslandCore/IslandTopStatusBandLayout.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: `Tasks` now renders a compact Codex task list in the expanded primary
+  content area below the top status band. The list reads up to 4 recent
+  unarchived Codex threads, uses dynamic row heights for 1, 2, and 3+ tasks,
+  truncates long task names/status text, and reserves a fixed empty right-side
+  slot for future approval controls. The old top-band `codexStatusFrame`
+  placement was removed so the green calibration region remains only a debug
+  safe-region marker.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; debug calibration launch with frame capture at
+  `/tmp/dynamic-island-codex-tasks-capture/frame-024.png`; CPU sampled at 2.5%
+  after settling.
+- Rollback: Remove `IslandPrimaryContentLayout` and `CodexTasksContentView`,
+  restore the old top-band `CodexStatusBarView` placement if desired, revert
+  `CodexStatusSignalSource` to one latest thread, and delete the matching
+  CoreChecks assertions.
+
+### 2026-07-05 - debug-codex-status-bar-hook
+- Reason: User wanted the extracted Claude-style status bar shown in the
+  expanded calibration debug green left-safe top-band region, hooked to local
+  Codex session/time/token/status data.
+- Changed:
+  - `Sources/DynamicIslandCore/CodexStatusBarSnapshot.swift`
+  - `Sources/DynamicIslandCore/IslandTopStatusBandLayout.swift`
+  - `Sources/DynamicIsland/Support/CodexStatusSignalSource.swift`
+  - `Sources/DynamicIsland/Views/CodexStatusBarView.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayState.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `docs/superpowers/plans/2026-07-05-codex-status-bar.md`
+  - `MEMORY.md`
+- Result: Calibration debug mode now starts a Codex status poller that reads
+  `~/.codex/state_5.sqlite` for the latest thread metadata and the latest
+  rollout JSONL tail for active turn timing/token/status events. The status
+  bar is rendered only while expanded calibration overlay is visible, uses
+  `IslandTopStatusBandLayout.codexStatusFrame` inside the left safe region,
+  avoids the camera housing, and leaves room for the File Shelf button. The
+  source caches sqlite thread lookups for 5 seconds and polls at 1 second so
+  it does not continuously spawn sqlite. Logs record only activity, counts,
+  token totals, ID length, and title length; raw Codex titles, prompts, paths,
+  and transcript text are not logged.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `./script/build_and_run.sh --debug-calibration`; process CPU
+  sampled at 2.9% after the debug overlay settled.
+- Rollback: Remove `CodexStatusBarSnapshot`, `CodexStatusSignalSource`,
+  `CodexStatusBarView`, the `codexStatusFrame` layout helper, controller
+  polling task, and `codexStatusBarSnapshot` overlay state, then delete the
+  matching CoreChecks assertions and plan document.
+
+### 2026-07-05 - codex-xhigh-energy-trigger
+- Reason: User wanted the top-band `璀璨流光拖尾` effect to trigger from the
+  local Codex reasoning effort, preferring CcSwitch when installed and falling
+  back to the Codex config file when it is not available.
+- Changed:
+  - `Sources/DynamicIslandCore/CodexReasoningEffort.swift`
+  - `Sources/DynamicIsland/Support/CodexReasoningEffortSignalSource.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayState.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: The app first reads the realtime request signal at
+  `~/.cc-switch/codex-reasoning-signal.json` (or `/tmp/codex-reasoning-signal.json`
+  for debug), then falls back to CcSwitch's current Codex provider config from
+  `~/.cc-switch/cc-switch.db` using only the embedded `config` field, then
+  falls back to `~/.codex/config.toml`. Only `xhigh` and `max` enable the
+  top-band energy effect; lower efforts or `active:false` leave it unmounted.
+  Realtime signal files older than 60 seconds are ignored so stale debug or
+  proxy output cannot permanently override the config fallback.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `./script/build_and_run.sh --debug-calibration`; manual
+  realtime signal writes for `high`, `xhigh`, and `active:false`; CPU sampled
+  at 0.8% after launch.
+- Rollback: Remove `CodexReasoningEffort`, `CodexReasoningEffortSignalSource`,
+  the controller polling task, and the `isTopBandEnergyEffectEnabled` overlay
+  gate, then restore the top-band energy condition to its previous debug-only
+  behavior.
+
+### 2026-07-05 - expanded-top-band-energy-effect
+- Reason: User requested the Claude-style pixel energy effect be moved into the
+  expanded island's debug blue right-safe top-band region while leaving the
+  `Tasks/Data/Tools/Settings` primary feature controls unchanged.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Views/TopBandEnergyEffectView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: The effect is a bottom background layer mounted only when expanded,
+  starts at `IslandTopStatusBandLayout.rightInfoRegion.minX`, extends to the
+  island's right edge, refuses hit testing, removes its own rounded ends,
+  clips to that rectangular right-side region, starts after the expand animation
+  settles to avoid a left-side opening trail, defers the initial burst until the
+  Metal view has its real layout size so particles do not start from the
+  default 1x1 left edge, keeps the highest energy on the right side with a
+  right-to-left pixel shimmer tail, and uses a low-frequency manual Metal draw
+  timer instead of an always-on display link.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `./script/build_and_run.sh`; debug expanded launch with
+  `./script/build_and_run.sh --debug-calibration`; CPU sampled at 0.2% after
+  launch settled in calibration mode.
+- Rollback: Remove `TopBandEnergyEffectView` and the `topBandEnergyFrame`
+  branch from `IslandOverlayView`, then delete the matching CoreChecks
+  assertions.
 
 ### 2026-07-02 - primary-feature-top-to-bottom-spring-fade
 - Reason: User clarified the expanded top-level feature controls

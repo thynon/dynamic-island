@@ -55,6 +55,8 @@ final class IslandPanelController {
     private var temporaryFileShelfSelection = TemporaryFileShelfSelection()
     private var musicPlaybackPollingTask: Task<Void, Never>?
     private var debugMusicSignalTask: Task<Void, Never>?
+    private var codexReasoningEffortPollingTask: Task<Void, Never>?
+    private var codexStatusPollingTask: Task<Void, Never>?
     private var musicSkipTask: Task<Void, Never>?
     private var temporaryFileShelfPruningTask: Task<Void, Never>?
     private var didStartDebugPrimaryFeatureFrameCapture = false
@@ -109,6 +111,10 @@ final class IslandPanelController {
         } else {
             startMusicPlaybackPolling()
         }
+        startCodexReasoningEffortPolling()
+        if runtimeSettings.isCalibrationModeEnabled {
+            startCodexStatusPolling()
+        }
         startTemporaryFileShelfPruning()
         observeRuntimeSettings()
     }
@@ -152,6 +158,8 @@ final class IslandPanelController {
     deinit {
         musicPlaybackPollingTask?.cancel()
         debugMusicSignalTask?.cancel()
+        codexReasoningEffortPollingTask?.cancel()
+        codexStatusPollingTask?.cancel()
         musicSkipTask?.cancel()
         temporaryFileShelfPruningTask?.cancel()
         runtimeSettingsCancellable?.cancel()
@@ -326,6 +334,11 @@ final class IslandPanelController {
 
         overlayState.isCalibrationOverlayVisible = calibrationModeEnabled
         overlayState.calibrationHasCameraHousing = Self.hasCameraHousing(on: NSScreen.main)
+        if calibrationModeEnabled {
+            startCodexStatusPolling()
+        } else {
+            stopCodexStatusPolling()
+        }
 
         interactionLogger.log("settings.changed", metadata: [
             "fileShelfEnabled": fileShelfEnabled,
@@ -1203,6 +1216,72 @@ final class IslandPanelController {
                 try? await Task.sleep(nanoseconds: 160_000_000)
             }
         }
+    }
+
+    private func startCodexReasoningEffortPolling() {
+        codexReasoningEffortPollingTask?.cancel()
+        codexReasoningEffortPollingTask = Task { [weak self] in
+            var lastSignal: CodexReasoningEffortSignal?
+            while !Task.isCancelled {
+                let signal = await Task.detached(priority: .utility) {
+                    CodexReasoningEffortSignalSource().currentSignal()
+                }.value
+
+                guard let self else { return }
+                if signal != lastSignal {
+                    overlayState.isTopBandEnergyEffectEnabled = signal.triggersEnergyTail
+                    interactionLogger.log("codex.reasoning.effort.changed", metadata: [
+                        "source": signal.source.rawValue,
+                        "effort": signal.effort?.rawValue ?? "",
+                        "triggersEnergyTail": signal.triggersEnergyTail
+                    ])
+                    lastSignal = signal
+                }
+
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+        }
+    }
+
+    private func startCodexStatusPolling() {
+        codexStatusPollingTask?.cancel()
+        codexStatusPollingTask = Task { [weak self] in
+            let codexStatusSignalSource = CodexStatusSignalSource()
+            var lastLoggedSummary: String?
+            while !Task.isCancelled {
+                let snapshot = await Task.detached(priority: .utility) {
+                    codexStatusSignalSource.currentSnapshot()
+                }.value
+
+                guard let self else { return }
+                overlayState.codexStatusBarSnapshot = snapshot
+
+                let logSummary = [
+                    snapshot.threadID ?? "",
+                    "\(snapshot.totalTokens)",
+                    "\(snapshot.runningTasksCount)",
+                    snapshot.activityState.rawValue
+                ].joined(separator: "|")
+                if logSummary != lastLoggedSummary {
+                    interactionLogger.log("codex.status.changed", metadata: [
+                        "activity": snapshot.activityState.rawValue,
+                        "runningTasks": snapshot.runningTasksCount,
+                        "totalTokens": snapshot.totalTokens,
+                        "threadIDLength": snapshot.threadID?.count ?? 0,
+                        "titleLength": snapshot.threadTitle?.count ?? 0
+                    ])
+                    lastLoggedSummary = logSummary
+                }
+
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+        }
+    }
+
+    private func stopCodexStatusPolling() {
+        codexStatusPollingTask?.cancel()
+        codexStatusPollingTask = nil
+        overlayState.codexStatusBarSnapshot = .unavailable
     }
 
     private func applyDebugMusicSignal(_ signal: DebugMusicSignal) {
