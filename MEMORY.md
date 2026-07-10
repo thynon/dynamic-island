@@ -18,8 +18,8 @@ history. Use git history for the pre-consolidation line-by-line event log.
 
 ## Current Snapshot
 
-- Date: 2026-06-27.
-- Branch observed during consolidation: `optimization-comprehensive`.
+- Date: 2026-07-10.
+- Branch observed during consolidation: `main`.
 - Product: native macOS Dynamic Island-style desktop app for notched and
   non-notched displays.
 - Stack: SwiftPM, macOS 14+, Swift 6, AppKit + SwiftUI.
@@ -27,7 +27,8 @@ history. Use git history for the pre-consolidation line-by-line event log.
   - black notch-blended island shell
   - music playback state with album art, low-cost waveform, and cancellable
     horizontal skip gestures
-  - expanded Data panel backed by cc-switch usage and a local usage mirror
+  - expanded Tasks list backed by local Codex state and rollout metadata
+  - retained Data, Tools, and Settings primary navigation controls
   - temporary File Shelf overlay with filtering, selection, and drag-out
   - runtime settings, calibration/debug modes, display adaptation, and sanitized
     interaction logs
@@ -91,6 +92,103 @@ New events should use this shape:
 - Verify:
 - Rollback:
 ```
+
+### 2026-07-10 - codex-completed-task-dismissal
+- Reason: User requested manual removal for completed Tasks rows with a hover
+  corner close control and a short shatter effect.
+- Changed:
+  - `Sources/DynamicIsland/Views/CodexTasksContentView.swift`
+  - `Sources/DynamicIsland/Views/CodexStatusBarView.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Sources/DynamicIsland/Support/CodexTaskDismissalStore.swift`
+  - `Sources/DynamicIslandCore/CodexStatusBarSnapshot.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Only non-working, non-approval rows expose a delayed-fade `xmark`
+  corner button while hovered. Clicking starts an 8-particle shatter animation;
+  the row is removed after the animation and the source Codex database/rollout
+  remains untouched. Each task uses `threadID + turnID` identity; dismissal
+  keys are stored locally for seven days and can be undone for five seconds.
+  Logs contain only sanitized ID/title/turn lengths.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `./script/build_and_run.sh`; `./script/build_and_run.sh
+  --debug-calibration`; `git diff --check`. The expanded debug screenshot
+  showed the Tasks/Data/Tools/Settings switcher and active Tasks row; no
+  completed row was available in the live fixture for destructive click testing.
+- Rollback: Remove the dismissal callback and local dismissal store to restore
+  read-only task rows; leave Codex source data untouched.
+
+### 2026-07-10 - codex-terminal-state-reconciliation
+- Reason: Tasks kept showing a completed Codex tool session as `Running tool`
+  because the rollout ended with `turn_aborted`, while the parser only treated
+  `task_complete` as terminal.
+- Changed:
+  - `Sources/DynamicIsland/Support/CodexStatusSignalSource.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: Rollout parsing now has an explicit unknown/running/terminal lifecycle;
+  task completion, app-server turn completion/abort/failure/cancel events all
+  close the current turn and compute a fallback duration. Terminal turns ignore
+  stale global approval flags, completed rows retain the existing 10-second
+  display window, and active-looking sessions with no rollout file update for
+  60 seconds are hidden as stale. Rollout file modification time supplies the
+  stale check without parsing a timestamp for every JSONL event.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `./script/build_and_run.sh`; `git diff --check`. After
+  relaunch, the previous stale session stopped contributing to
+  `runningTasks`; the current live Codex turn remained the only running task.
+  Process samples settled around 0.4–1.3% CPU and 0.2% memory.
+- Rollback: Restore the previous timestamp comparison and terminal-event
+  handling only if a future Codex event schema requires a different lifecycle
+  mapping; keep the regression assertions with whichever mapping is selected.
+
+### 2026-07-10 - remove-unused-reference-and-qa-artifacts
+- Reason: User requested removal of unused reference files and images.
+- Changed:
+  - deleted ignored `.reference/vibe-island/` local reference clone
+  - deleted historical design images, planning/specification documents, archived
+    handoff/log documents, and visual QA screenshots
+  - `AGENTS.md`
+  - `.gitignore`
+  - `MEMORY.md`
+- Result: The project no longer carries external reference source, stale design
+  artifacts, or committed capture output. Production source, tests, and scripts
+  have no dependency on the removed paths; debug frame capture still writes
+  only to an explicitly supplied output directory.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `git diff --check`.
+- Rollback: Restore tracked artifacts from Git if historical design material is
+  required again; re-clone Vibe Island separately only if the user explicitly
+  requests fresh external research.
+
+### 2026-07-10 - layout-and-background-activity-optimization
+- Reason: Improve compact Files layout and reduce inactive Codex status work
+  without changing the requested `Data`, `Tools`, and `Settings` navigation.
+- Changed:
+  - `Sources/DynamicIslandCore/IslandAnimationProfile.swift`
+  - `Sources/DynamicIslandCore/TemporaryFileShelf.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Sources/DynamicIsland/Views/FilesPrimaryContentView.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: `Tasks`, `Data`, `Tools`, and `Settings` remain in the right safe-zone
+  switcher, and Files returns to the previously selected primary feature.
+  Only unused animation-profile values, the unused status-stop path, and an
+  unused file grouping API were removed. Files keeps its 220pt AirDrop zone on
+  wide layouts but reduces it to 30% of available content width, never below
+  150pt, on compact layouts. Music event logs now retain only title and artist
+  lengths. Codex status reads stay at 1-second cadence only while Tasks is
+  visible; collapsed, Files, and File Shelf states refresh their background
+  snapshot at most every 5 seconds.
+- Verify: `swift run DynamicIslandCoreChecks`; `swift build --product
+  DynamicIsland`; `./script/build_and_run.sh`; `git diff --check`. With two
+  active Codex tasks, the normal collapsed app settled at 1.1% CPU and 0.2%
+  memory after 39 seconds.
+- Rollback: Restore the removed unused animation-profile values or status-stop
+  path only if a future caller needs them. Restore the fixed AirDrop width if a
+  future layout has a guaranteed wide content frame.
 
 ### 2026-07-09 - codex-tasks-normal-mode-polling
 - Reason: User reported the expanded `Tasks` feature was not showing Codex

@@ -9,11 +9,10 @@
 - 展开态临时 File Shelf overlay
 - 显示器尺寸/刘海适配与交互日志
 
-- **不是** Vibe Island 功能复刻——`.reference/vibe-island/` 仅用于学习外壳、布局和动效
+- **不是**其他 Dynamic Island 项目的功能复刻
 - AI 会话监控、hook、socket、审批、终端跳转、SSH、更新等功能**不能自动纳入**，除非用户明确选择
 
 **技术栈**: SwiftPM · macOS 14+ · Swift 6 · AppKit + SwiftUI
-**参考栈**（仅查阅）: Tauri v2 · Rust · React 19 · TypeScript · Tailwind · Framer Motion · Zustand
 
 ---
 
@@ -72,6 +71,7 @@ Sources/
       MusicPlaybackDataSource.swift  #   Music/Spotify 播放状态和切歌命令
       TemporaryFileShelfStore.swift  #   内存 File Shelf store
       IslandInteractionLogger.swift  #   每次启动的 JSONL 交互日志
+      CodexTaskDismissalStore.swift  #   本地已隐藏任务记录（不修改 Codex 数据）
       ScreenMetricsProvider.swift    #   显示器/刘海尺寸派生
       DisplayProfileStore.swift      #   显示器配置缓存
       DebugMusicSignal.swift         #   显式 debug 音乐信号
@@ -203,10 +203,5 @@ script/send_music_signal.sh         #   debug 音乐信号发送
 |------|------|
 | `AGENTS.md` | 本文件——项目指令 |
 | `MEMORY.md` | 项目事件记忆 |
-| `AGENTS-01-结构与外壳与UI.md` | 参考项目外壳/UI 分析 |
-| `AGENTS-02-功能与架构.md` | 参考项目功能/架构分析 |
-| `AGENTS-03-分阶段计划.md` | 参考分阶段方法 |
-| `docs/HANDOFF-2026-06-15.md` | 项目交接文档 |
 | `docs/CODEX_GIT_WORKFLOW.md` | Codex + Git 协作流程 |
 | `script/safe_git_save.sh` | 安全提交指定文件脚本 |
-| `.reference/vibe-island/` | 参考源码（独立 git 仓库，v1.0.29） |

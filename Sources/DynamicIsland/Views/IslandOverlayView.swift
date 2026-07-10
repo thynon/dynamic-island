@@ -6,6 +6,8 @@ struct IslandOverlayView: View {
     let metrics: NotchMetrics
     @ObservedObject var state: IslandOverlayState
     let onExpansionChange: @MainActor (Bool) -> Void
+    let onDismissCodexTask: @MainActor (CodexTaskStatus) -> Void
+    let onUndoCodexTask: @MainActor (CodexTaskStatus) -> Void
     let fileShelfActions: FileShelfActions
     @State private var isTopBandEnergyActive = false
     @State private var topBandEnergyActivationSequence = 0
@@ -18,11 +20,15 @@ struct IslandOverlayView: View {
         metrics: NotchMetrics,
         state: IslandOverlayState,
         onExpansionChange: @escaping @MainActor (Bool) -> Void = { _ in },
+        onDismissCodexTask: @escaping @MainActor (CodexTaskStatus) -> Void = { _ in },
+        onUndoCodexTask: @escaping @MainActor (CodexTaskStatus) -> Void = { _ in },
         fileShelfActions: FileShelfActions = FileShelfActions()
     ) {
         self.metrics = metrics
         self.state = state
         self.onExpansionChange = onExpansionChange
+        self.onDismissCodexTask = onDismissCodexTask
+        self.onUndoCodexTask = onUndoCodexTask
         self.fileShelfActions = fileShelfActions
     }
 
@@ -223,10 +229,6 @@ struct IslandOverlayView: View {
         animationProfile.expandResponse + 0.08
     }
 
-    private var primaryFeatureEntranceOffsetY: CGFloat {
-        primaryNavigationFrame.height + metrics.openTopCornerRadius
-    }
-
     private var expandAnimation: Animation {
         .interactiveSpring(
             response: animationProfile.expandResponse,
@@ -237,24 +239,6 @@ struct IslandOverlayView: View {
 
     private var collapseAnimation: Animation {
         .easeOut(duration: animationProfile.collapseDuration)
-    }
-
-    private var primaryFeatureEntranceAnimation: Animation {
-        guard isExpanded else {
-            return .easeOut(duration: animationProfile.attachedElementCollapseDuration)
-        }
-
-        let animation = Animation.spring(
-            response: animationProfile.primaryFeatureEntranceResponse,
-            dampingFraction: animationProfile.primaryFeatureEntranceDampingFraction,
-            blendDuration: animationProfile.primaryFeatureEntranceBlendDuration
-        )
-
-        guard animationProfile.primaryFeatureEntranceStartDelay > 0 else {
-            return animation
-        }
-
-        return animation.delay(animationProfile.primaryFeatureEntranceStartDelay)
     }
 
     var body: some View {
@@ -297,7 +281,12 @@ struct IslandOverlayView: View {
             .zIndex(4)
 
             if isExpanded && state.selectedPrimaryFeature == .tasks {
-                CodexTasksContentView(snapshot: state.codexStatusBarSnapshot)
+                CodexTasksContentView(
+                    snapshot: state.codexStatusBarSnapshot,
+                    dismissedTaskKeys: state.dismissedCodexTaskKeys,
+                    onDeleteTask: onDismissCodexTask,
+                    onUndoTask: onUndoCodexTask
+                )
                     .frame(width: primaryContentFrame.width, height: primaryContentFrame.height)
                     .position(x: primaryContentFrame.midX, y: primaryContentFrame.midY)
                     .allowsHitTesting(false)
@@ -587,7 +576,6 @@ private struct PrimaryFeatureSwitcher: View {
         )
 
         let staggerDelay = animationProfile.primaryFeatureEntranceStartDelay + (Double(index) * animationProfile.primaryFeatureStaggerDelay)
-
         return baseAnimation.delay(staggerDelay)
     }
 

@@ -45,6 +45,7 @@ final class IslandOverlayState: ObservableObject {
     @Published var calibrationHasCameraHousing = false
     @Published var isTopBandEnergyEffectEnabled = false
     @Published var codexStatusBarSnapshot: CodexStatusBarSnapshot = .unavailable
+    @Published var dismissedCodexTaskKeys: Set<String> = []
     @Published var musicPlayback: MusicPlaybackSnapshot = .idle
     @Published var temporaryFileShelf = TemporaryFileShelf()
     @Published var temporaryFileShelfSelectedItemIDs: Set<TemporaryShelfItem.ID> = []

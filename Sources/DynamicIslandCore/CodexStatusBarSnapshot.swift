@@ -48,6 +48,8 @@ public struct CodexTaskStatus: Equatable, Identifiable, Sendable {
     public let totalTokens: Int
     public let activityState: CodexStatusBarSnapshot.ActivityState
     public let approvalState: ApprovalState
+    public let turnID: String?
+    public let completedAt: TimeInterval?
 
     public init(
         id: String,
@@ -55,7 +57,9 @@ public struct CodexTaskStatus: Equatable, Identifiable, Sendable {
         elapsedSeconds: Int = 0,
         totalTokens: Int = 0,
         activityState: CodexStatusBarSnapshot.ActivityState = .unavailable,
-        approvalState: ApprovalState = .none
+        approvalState: ApprovalState = .none,
+        turnID: String? = nil,
+        completedAt: TimeInterval? = nil
     ) {
         self.id = id
         self.title = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -65,6 +69,8 @@ public struct CodexTaskStatus: Equatable, Identifiable, Sendable {
         self.totalTokens = max(0, totalTokens)
         self.activityState = activityState
         self.approvalState = approvalState
+        self.turnID = turnID
+        self.completedAt = completedAt
     }
 
     public var formattedElapsedTime: String {
@@ -73,6 +79,16 @@ public struct CodexTaskStatus: Equatable, Identifiable, Sendable {
 
     public var formattedTokenCount: String {
         CodexStatusBarSnapshot.formatTokenCount(totalTokens)
+    }
+
+    public var dismissalKey: String {
+        if let turnID, !turnID.isEmpty {
+            return "\(id):turn:\(turnID)"
+        }
+        if let completedAt {
+            return "\(id):completed:\(Int(completedAt.rounded()))"
+        }
+        return id
     }
 }
 

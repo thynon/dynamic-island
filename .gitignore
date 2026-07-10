@@ -4,4 +4,3 @@ dist/
 output/
 .playwright-cli/
 .superpowers/
-.reference/

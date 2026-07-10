@@ -42,16 +42,6 @@ public enum TemporaryShelfFileCategory: String, CaseIterable, Equatable, Hashabl
     }
 }
 
-public struct TemporaryFileShelfGroup: Equatable, Sendable {
-    public let category: TemporaryShelfFileCategory
-    public let items: [TemporaryShelfItem]
-
-    public init(category: TemporaryShelfFileCategory, items: [TemporaryShelfItem]) {
-        self.category = category
-        self.items = items
-    }
-}
-
 public enum TemporaryFileShelfFilter: String, CaseIterable, Equatable, Hashable, Sendable {
     case all
     case images
@@ -168,12 +158,4 @@ public struct TemporaryFileShelf: Equatable, Sendable {
         items.filter { filter.matches($0.category) }
     }
 
-    public func groups(filteredBy filter: TemporaryFileShelfFilter) -> [TemporaryFileShelfGroup] {
-        TemporaryShelfFileCategory.displayOrder.compactMap { category in
-            guard filter.matches(category) else { return nil }
-            let categoryItems = items.filter { $0.category == category }
-            guard !categoryItems.isEmpty else { return nil }
-            return TemporaryFileShelfGroup(category: category, items: categoryItems)
-        }
-    }
 }

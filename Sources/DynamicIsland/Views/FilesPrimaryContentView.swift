@@ -19,7 +19,8 @@ struct FilesPrimaryContentView: View {
     @State private var isAirDropTargeted = false
     @State private var isMultiSelectionEnabled = false
 
-    private let airDropZoneWidth: CGFloat = 220
+    private let maximumAirDropZoneWidth: CGFloat = 220
+    private let minimumAirDropZoneWidth: CGFloat = 150
     private let previewHorizontalInset: CGFloat = 12
     private let previewVerticalInset: CGFloat = 12
     private let fileTileSpacing: CGFloat = 9
@@ -35,15 +36,20 @@ struct FilesPrimaryContentView: View {
         activeTransferItems.count
     }
 
+    private func airDropZoneWidth(for contentWidth: CGFloat) -> CGFloat {
+        min(maximumAirDropZoneWidth, max(minimumAirDropZoneWidth, contentWidth * 0.30))
+    }
+
     var body: some View {
         GeometryReader { proxy in
+            let resolvedAirDropZoneWidth = airDropZoneWidth(for: proxy.size.width)
             HStack(spacing: 10) {
                 airDropZone
-                    .frame(width: airDropZoneWidth, height: proxy.size.height)
+                    .frame(width: resolvedAirDropZoneWidth, height: proxy.size.height)
 
                 previewZone
                     .frame(
-                        width: max(1, proxy.size.width - airDropZoneWidth - 10),
+                        width: max(1, proxy.size.width - resolvedAirDropZoneWidth - 10),
                         height: proxy.size.height
                     )
             }

@@ -2,6 +2,12 @@ import Foundation
 import DynamicIslandCore
 
 final class CodexStatusSignalSource: @unchecked Sendable {
+    private enum RolloutLifecycle {
+        case unknown
+        case running
+        case terminal
+    }
+
     private struct ThreadRecord {
         let id: String
         let threadTitle: String?
@@ -17,6 +23,20 @@ final class CodexStatusSignalSource: @unchecked Sendable {
         var activityState: CodexStatusBarSnapshot.ActivityState?
         var approvalState: CodexTaskStatus.ApprovalState = .none
         var hasRecentActivity = false
+        var lifecycle: RolloutLifecycle = .unknown
+        var lastEventAt: TimeInterval?
+        var turnID: String?
+
+        var isRunning: Bool {
+            switch lifecycle {
+            case .unknown:
+                startedAt.map { $0 > (completedAt ?? 0) } ?? false
+            case .running:
+                true
+            case .terminal:
+                false
+            }
+        }
 
         var needsExpandedTailRead: Bool {
             hasRecentActivity && startedAt == nil && completedAt == nil && !approvalState.isVisible
@@ -36,6 +56,7 @@ final class CodexStatusSignalSource: @unchecked Sendable {
     private let homeDirectoryURL: URL
     private let fileManager: FileManager
     private let sqliteExecutableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+    private let iso8601DateFormatter = ISO8601DateFormatter()
     private let codexStateDatabaseRelativePath = ".codex/state_5.sqlite"
     private let codexGlobalStateRelativePath = ".codex/.codex-global-state.json"
     private let rolloutFastTailMaximumBytes = 128 * 1024
@@ -43,6 +64,7 @@ final class CodexStatusSignalSource: @unchecked Sendable {
     private let threadRefreshInterval: TimeInterval = 5
     private let globalStateRefreshInterval: TimeInterval = 1
     private let completedTaskRetentionDuration: TimeInterval = 10
+    private let staleTaskTimeoutDuration: TimeInterval = 60
     private var cachedThreadRecords: [ThreadRecord] = []
     private var cachedThreadRefreshDate: Date?
     private var cachedGlobalApprovalStates: [String: CodexTaskStatus.ApprovalState] = [:]
@@ -136,13 +158,14 @@ final class CodexStatusSignalSource: @unchecked Sendable {
     ) -> CodexTaskStatus? {
         let rolloutState = thread.rolloutPath
             .flatMap { readRolloutState(from: URL(fileURLWithPath: $0)) }
-        let approvalState = resolvedApprovalState(
-            rolloutState: rolloutState?.approvalState ?? .none,
-            globalApprovalState: globalApprovalState ?? .none
-        )
-        let isRunning = rolloutState?.startedAt.map { startedAt in
-            startedAt > (rolloutState?.completedAt ?? 0)
-        } ?? false
+        let isTerminal = rolloutState?.lifecycle == .terminal
+        let approvalState = isTerminal
+            ? .none
+            : resolvedApprovalState(
+                rolloutState: rolloutState?.approvalState ?? .none,
+                globalApprovalState: globalApprovalState ?? .none
+            )
+        let isRunning = rolloutState?.isRunning ?? false
         guard isTaskVisible(
             rolloutState: rolloutState,
             isRunning: isRunning,
@@ -171,7 +194,9 @@ final class CodexStatusSignalSource: @unchecked Sendable {
                 rolloutState: rolloutState,
                 approvalState: approvalState
             ),
-            approvalState: approvalState
+            approvalState: approvalState,
+            turnID: rolloutState?.turnID,
+            completedAt: rolloutState?.completedAt
         )
     }
 
@@ -212,6 +237,11 @@ final class CodexStatusSignalSource: @unchecked Sendable {
             return true
         }
         if isRunning {
+            if let lastEventAt = rolloutState?.lastEventAt,
+               now.timeIntervalSince1970 - lastEventAt > staleTaskTimeoutDuration
+            {
+                return false
+            }
             return true
         }
         guard let completedAt = rolloutState?.completedAt else {
@@ -243,6 +273,7 @@ final class CodexStatusSignalSource: @unchecked Sendable {
                 state = rolloutState(from: expandedLines)
             }
         }
+        state.lastEventAt = signature?.modificationDate?.timeIntervalSince1970
         cacheRolloutState(state, signature: signature, path: url.path)
         return state
     }
@@ -270,9 +301,14 @@ final class CodexStatusSignalSource: @unchecked Sendable {
             }
 
             let payload = event["payload"] as? [String: Any] ?? [:]
+            state.turnID = stringValue(payload["turn_id"])
+                ?? stringValue(payload["turnId"])
+                ?? stringValue(event["turn_id"])
+                ?? stringValue(event["turnId"])
+                ?? state.turnID
             applyAppServerNotification(event, payload: payload, to: &state)
             if event["type"] as? String == "event_msg" {
-                applyEventMessagePayload(payload, to: &state)
+                applyEventMessagePayload(payload, event: event, to: &state)
             } else if event["type"] as? String == "response_item" {
                 applyResponseItemPayload(payload, to: &state)
             }
@@ -280,16 +316,18 @@ final class CodexStatusSignalSource: @unchecked Sendable {
         return state
     }
 
-    private func applyEventMessagePayload(_ payload: [String: Any], to state: inout RolloutState) {
+    private func applyEventMessagePayload(
+        _ payload: [String: Any],
+        event: [String: Any],
+        to state: inout RolloutState
+    ) {
         switch payload["type"] as? String {
         case "task_started":
             state.startedAt = doubleValue(payload["started_at"])
+            state.lifecycle = .running
             state.activityState = .thinking
         case "task_complete":
-            state.completedAt = doubleValue(payload["completed_at"])
-            state.durationMilliseconds = intValue(payload["duration_ms"])
-            state.activityState = .idle
-            state.approvalState = .none
+            completeTurn(payload: payload, event: event, state: &state)
         case "token_count":
             state.hasRecentActivity = true
             if let info = payload["info"] as? [String: Any],
@@ -300,12 +338,20 @@ final class CodexStatusSignalSource: @unchecked Sendable {
             }
         case "agent_message":
             state.hasRecentActivity = true
+            if state.lifecycle != .terminal {
+                state.lifecycle = .running
+            }
             state.activityState = .writing
         case "error":
             state.hasRecentActivity = true
+            if state.lifecycle != .terminal {
+                state.lifecycle = .running
+            }
             state.activityState = .retrying
         case "turn_aborted":
-            state.approvalState = .none
+            completeTurn(payload: payload, event: event, state: &state)
+        case "turn_failed", "turn_cancelled":
+            completeTurn(payload: payload, event: event, state: &state)
         case "exec_approval_request", "command_execution_request_approval":
             state.approvalState = .pendingCommand
             state.activityState = .waitingApproval
@@ -348,8 +394,10 @@ final class CodexStatusSignalSource: @unchecked Sendable {
             if state.approvalState == .autoReviewing {
                 state.approvalState = .none
             }
-        case "serverRequest/resolved", "turn/completed":
+        case "serverRequest/resolved":
             state.approvalState = .none
+        case "turn/completed", "turn/aborted", "turn/cancelled", "turn/failed":
+            completeTurn(payload: payload, event: event, state: &state)
         default:
             break
         }
@@ -357,11 +405,38 @@ final class CodexStatusSignalSource: @unchecked Sendable {
 
     private func applyResponseItemPayload(_ payload: [String: Any], to state: inout RolloutState) {
         state.hasRecentActivity = true
+        if state.lifecycle != .terminal {
+            state.lifecycle = .running
+        }
         if payload["name"] != nil || payload["arguments"] != nil {
             state.activityState = .runningTool
         } else if payload["phase"] != nil || payload["role"] as? String == "assistant" {
             state.activityState = .writing
         }
+    }
+
+    private func completeTurn(
+        payload: [String: Any],
+        event: [String: Any],
+        state: inout RolloutState
+    ) {
+        let completedAt = doubleValue(payload["completed_at"])
+            ?? eventTimestamp(event)
+            ?? Date().timeIntervalSince1970
+        state.completedAt = completedAt
+        if let durationMilliseconds = intValue(payload["duration_ms"]) {
+            state.durationMilliseconds = durationMilliseconds
+        } else if let startedAt = state.startedAt {
+            state.durationMilliseconds = max(0, Int(((completedAt - startedAt) * 1000).rounded()))
+        }
+        state.lifecycle = .terminal
+        state.activityState = .idle
+        state.approvalState = .none
+    }
+
+    private func eventTimestamp(_ event: [String: Any]) -> TimeInterval? {
+        guard let rawTimestamp = event["timestamp"] as? String else { return nil }
+        return iso8601DateFormatter.date(from: rawTimestamp)?.timeIntervalSince1970
     }
 
     private func readRecentLines(from url: URL, maximumBytes: Int) -> [String] {

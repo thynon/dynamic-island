@@ -26,6 +26,7 @@ final class IslandPanelController {
     private static let debugCalibrationEnvironmentKey = "ISLAND_DEBUG_CALIBRATION"
     private static let debugPrimaryFeatureFrameCaptureDirectoryEnvironmentKey = "ISLAND_DEBUG_PRIMARY_FEATURE_FRAME_CAPTURE_DIR"
     private static let codexReasoningFallbackRefreshInterval: TimeInterval = 2
+    private static let codexStatusBackgroundRefreshInterval: TimeInterval = 5
 
     private var metrics: NotchMetrics
     private var isExpanded = false
@@ -53,6 +54,7 @@ final class IslandPanelController {
     private let musicPlaybackDataSource: any MusicPlaybackDataSource
     private let temporaryFileShelfStore = TemporaryFileShelfStore()
     private let interactionLogger = IslandInteractionLogger()
+    private let codexTaskDismissalStore = CodexTaskDismissalStore()
     private var temporaryFileShelfSelection = TemporaryFileShelfSelection()
     private var lastNonFilesPrimaryFeature: IslandPrimaryFeature = .tasks
     private var musicPlaybackPollingTask: Task<Void, Never>?
@@ -84,6 +86,7 @@ final class IslandPanelController {
         overlayState.isCalibrationOverlayVisible = runtimeSettings.isCalibrationModeEnabled
         overlayState.calibrationHasCameraHousing = Self.hasCameraHousing(on: screen ?? NSScreen.main)
         overlayState.selectedPrimaryFeature = .tasks
+        overlayState.dismissedCodexTaskKeys = codexTaskDismissalStore.activeKeys()
         self.overlayState = overlayState
 
         panel = NSPanel(
@@ -403,8 +406,36 @@ final class IslandPanelController {
             onExpansionChange: { [weak self] expanded in
                 self?.setExpanded(expanded)
             },
+            onDismissCodexTask: { [weak self] task in
+                self?.dismissCodexTask(task)
+            },
+            onUndoCodexTask: { [weak self] task in
+                self?.restoreCodexTask(task)
+            },
             fileShelfActions: actions
         )
+    }
+
+    private func dismissCodexTask(_ task: CodexTaskStatus) {
+        guard !task.activityState.isWorking, task.approvalState == .none else { return }
+        codexTaskDismissalStore.dismiss(task.dismissalKey)
+        overlayState.dismissedCodexTaskKeys = codexTaskDismissalStore.activeKeys()
+        interactionLogger.log("codex.task.dismissed", metadata: [
+            "threadIDLength": task.id.count,
+            "titleLength": task.title.count,
+            "turnIDLength": task.turnID?.count ?? 0,
+            "activity": task.activityState.rawValue
+        ])
+    }
+
+    private func restoreCodexTask(_ task: CodexTaskStatus) {
+        codexTaskDismissalStore.restore(task.dismissalKey)
+        overlayState.dismissedCodexTaskKeys = codexTaskDismissalStore.activeKeys()
+        interactionLogger.log("codex.task.dismissed.undo", metadata: [
+            "threadIDLength": task.id.count,
+            "titleLength": task.title.count,
+            "turnIDLength": task.turnID?.count ?? 0
+        ])
     }
 
     private func configurePanel() {
@@ -1482,13 +1513,32 @@ final class IslandPanelController {
         codexStatusPollingTask = Task { [weak self] in
             let codexStatusSignalSource = CodexStatusSignalSource()
             var lastLoggedSummary: String?
+            var lastSnapshotRefreshDate: Date?
             while !Task.isCancelled {
-                let snapshot = await Task.detached(priority: .utility) {
-                    codexStatusSignalSource.currentSnapshot()
-                }.value
-
                 guard let self else { return }
-                overlayState.codexStatusBarSnapshot = snapshot
+                let now = Date()
+                let isTasksVisible = isExpanded
+                    && overlayState.selectedPrimaryFeature == .tasks
+                    && !overlayState.isFileShelfOverlayVisible
+                let shouldRefresh = isTasksVisible || lastSnapshotRefreshDate.map {
+                    now.timeIntervalSince($0) >= Self.codexStatusBackgroundRefreshInterval
+                } ?? true
+
+                guard shouldRefresh else {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    continue
+                }
+
+            let snapshot = await Task.detached(priority: .utility) {
+                codexStatusSignalSource.currentSnapshot()
+            }.value
+
+            lastSnapshotRefreshDate = Date()
+            for task in snapshot.tasks where task.activityState.isWorking {
+                codexTaskDismissalStore.restore(task.dismissalKey)
+            }
+            overlayState.dismissedCodexTaskKeys = codexTaskDismissalStore.activeKeys()
+            self.overlayState.codexStatusBarSnapshot = snapshot
 
                 let logSummary = [
                     snapshot.threadID ?? "",
@@ -1497,7 +1547,7 @@ final class IslandPanelController {
                     snapshot.activityState.rawValue
                 ].joined(separator: "|")
                 if logSummary != lastLoggedSummary {
-                    interactionLogger.log("codex.status.changed", metadata: [
+                    self.interactionLogger.log("codex.status.changed", metadata: [
                         "activity": snapshot.activityState.rawValue,
                         "runningTasks": snapshot.runningTasksCount,
                         "totalTokens": snapshot.totalTokens,
@@ -1512,12 +1562,6 @@ final class IslandPanelController {
         }
     }
 
-    private func stopCodexStatusPolling() {
-        codexStatusPollingTask?.cancel()
-        codexStatusPollingTask = nil
-        overlayState.codexStatusBarSnapshot = .unavailable
-    }
-
     private func applyDebugMusicSignal(_ signal: DebugMusicSignal) {
         overlayState.musicPlayback = signal.isPlaying
             ? .playing(title: signal.title, artist: signal.artist)
@@ -1525,8 +1569,8 @@ final class IslandPanelController {
         overlayState.isTrackInfoPresented = false
         interactionLogger.log("debug.music.signal", metadata: [
             "isPlaying": signal.isPlaying,
-            "title": signal.title,
-            "artist": signal.artist,
+            "titleLength": signal.title.count,
+            "artistLength": signal.artist.count,
             "feedbackDirection": signal.feedbackDirection.map { $0 == .next ? "next" : "previous" } ?? "",
             "progress": Double(signal.clampedProgress)
         ])
@@ -1572,8 +1616,8 @@ final class IslandPanelController {
         if previousIdentity != snapshot.trackIdentity || previousIsPlaying != snapshot.isPlaying {
             interactionLogger.log("music.playback.changed", metadata: [
                 "isPlaying": snapshot.isPlaying,
-                "title": snapshot.title,
-                "artist": snapshot.artist
+                "titleLength": snapshot.title.count,
+                "artistLength": snapshot.artist.count
             ])
         }
 
@@ -1608,8 +1652,8 @@ final class IslandPanelController {
             overlayState.isTrackInfoPresented = true
         }
         interactionLogger.log("track.info.shown", metadata: [
-            "title": overlayState.musicPlayback.title,
-            "artist": overlayState.musicPlayback.artist
+            "titleLength": overlayState.musicPlayback.title.count,
+            "artistLength": overlayState.musicPlayback.artist.count
         ])
 
         let workItem = DispatchWorkItem { [weak self] in

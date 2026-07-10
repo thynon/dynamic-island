@@ -15,13 +15,8 @@ public struct IslandAnimationProfile: Equatable, Sendable {
     public let primaryFeatureSelectionDamping: Double
     public let primaryFeatureButtonPressScale: Double
     public let primaryFeatureButtonPressDuration: Double
-    public let attachedElementExpandCurve: UnitBezier
-    public let attachedElementCollapseCurve: UnitBezier
-    public let attachedElementExpandDuration: Double
     public let attachedElementCollapseDuration: Double
     public let collapseCanvasDelay: Double
-    public let expandedContentScale: Double
-    public let audioWaveformCollapsedScale: Double
 
     public init(
         expandResponse: Double,
@@ -38,13 +33,8 @@ public struct IslandAnimationProfile: Equatable, Sendable {
         primaryFeatureSelectionDamping: Double,
         primaryFeatureButtonPressScale: Double,
         primaryFeatureButtonPressDuration: Double,
-        attachedElementExpandCurve: UnitBezier,
-        attachedElementCollapseCurve: UnitBezier,
-        attachedElementExpandDuration: Double,
         attachedElementCollapseDuration: Double,
-        collapseCanvasDelay: Double,
-        expandedContentScale: Double,
-        audioWaveformCollapsedScale: Double
+        collapseCanvasDelay: Double
     ) {
         self.expandResponse = expandResponse
         self.expandDampingFraction = expandDampingFraction
@@ -60,13 +50,8 @@ public struct IslandAnimationProfile: Equatable, Sendable {
         self.primaryFeatureSelectionDamping = primaryFeatureSelectionDamping
         self.primaryFeatureButtonPressScale = primaryFeatureButtonPressScale
         self.primaryFeatureButtonPressDuration = primaryFeatureButtonPressDuration
-        self.attachedElementExpandCurve = attachedElementExpandCurve
-        self.attachedElementCollapseCurve = attachedElementCollapseCurve
-        self.attachedElementExpandDuration = attachedElementExpandDuration
         self.attachedElementCollapseDuration = attachedElementCollapseDuration
         self.collapseCanvasDelay = collapseCanvasDelay
-        self.expandedContentScale = expandedContentScale
-        self.audioWaveformCollapsedScale = audioWaveformCollapsedScale
     }
 
     public static let `default` = IslandAnimationProfile(
@@ -79,31 +64,12 @@ public struct IslandAnimationProfile: Equatable, Sendable {
         primaryFeatureEntranceBlendDuration: 0,
         primaryFeatureEntranceStartDelay: 0.34,
         primaryFeatureStaggerDelay: 0.03,
-        primaryFeatureButtonSlideDistance: 6.0,
+        primaryFeatureButtonSlideDistance: 6,
         primaryFeatureSelectionResponse: 0.28,
         primaryFeatureSelectionDamping: 0.75,
         primaryFeatureButtonPressScale: 0.96,
         primaryFeatureButtonPressDuration: 0.12,
-        attachedElementExpandCurve: UnitBezier(0.18, 0.86, 0.22, 1.0),
-        attachedElementCollapseCurve: UnitBezier(0.20, 0.82, 0.22, 1.0),
-        attachedElementExpandDuration: 0.34,
         attachedElementCollapseDuration: 0.14,
-        collapseCanvasDelay: 0.14,
-        expandedContentScale: 0.88,
-        audioWaveformCollapsedScale: 0.92
+        collapseCanvasDelay: 0.14
     )
-}
-
-public struct UnitBezier: Equatable, Sendable {
-    public let x1: Double
-    public let y1: Double
-    public let x2: Double
-    public let y2: Double
-
-    public init(_ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double) {
-        self.x1 = x1
-        self.y1 = y1
-        self.x2 = x2
-        self.y2 = y2
-    }
 }
