@@ -94,6 +94,36 @@ New events should use this shape:
 - Rollback:
 ```
 
+### 2026-07-27 - cold-first-hover-click-hitch-removal
+- Reason: On the first launch of a process, the first hover followed by a click
+  produced a visible expansion hitch.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Views/CodexStatusBarView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+- Result: The delayed primary-content entrance now constructs only the selected
+  feature instead of Tasks, Files, and Data in one SwiftUI transaction. Features
+  mount lazily when first selected, then stay alive until collapse so Files
+  preserves its icon cache and outgoing content retains the explicit lower
+  layer. The installed Codex icon still resolves by bundle identifier, but its
+  one-time LaunchServices lookup runs in a utility detached task while the local
+  terminal symbol covers the initial frame. A cold automated hover/click
+  Animation Hitches trace measured the original content update at `60.90ms`;
+  selected-only mounting reduced it to `44.15ms`; moving icon lookup off the main
+  thread left no hitch or potential-hang rows in the final five-second trace.
+- Verify: The new source contracts failed before each implementation step.
+  `swift run DynamicIslandCoreChecks`, `swift build --product DynamicIsland`,
+  `./script/build_and_run.sh`, and `git diff --check` passed after removing the
+  temporary reproduction hook. A six-file Files to Tasks to Files trace saw the
+  existing icon cold-load delays only on the first Files visit, with none when
+  returning to the retained view. The final ten settled idle CPU samples had a
+  `1.5%` median; one isolated polling spike returned immediately to the
+  `0.8%...2.2%` range.
+- Rollback: Restore eager mounting before the delayed entrance and the
+  synchronous static Codex app icon only if first-interaction latency is
+  deliberately accepted. Keep the visited-page state retention, entrance
+  timing, top-band layout, and File Shelf overlay contracts.
+
 ### 2026-07-19 - read-only-data-token-usage-integration
 - Reason: The retained Data primary page needed an accurate local Token summary
   without double-counting Codex, guessing cache semantics, writing source data,

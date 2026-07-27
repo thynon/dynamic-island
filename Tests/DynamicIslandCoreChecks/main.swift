@@ -970,6 +970,9 @@ private func testCodexStatusBarContracts() {
     expectEqual(statusBarView.contains("CodexStatusBarSnapshot.formatTokenCount(totalTokens)"), true, "Codex summary formats the focused cumulative token total")
     expectEqual(statusBarView.contains("task?.agentDisplayName"), true, "focused subagents use their Codex nickname instead of repeated task instructions")
     expectEqual(statusBarView.contains("com.openai.codex"), true, "Codex identity resolves the installed app icon by bundle identifier")
+    expectEqual(statusBarView.contains("private static let appIconTask"), true, "Codex app icon lookup starts outside the first Tasks render transaction")
+    expectEqual(statusBarView.contains("Task.detached(priority: .utility)"), true, "Codex app icon LaunchServices work stays off the interaction-critical main thread")
+    expectEqual(statusBarView.contains("private static let appIcon: NSImage?"), false, "Codex app icon is not synchronously initialized from the first view body")
     expectEqual(statusBarView.contains("terminal.fill"), true, "Codex identity has a local system-symbol fallback")
     expectEqual(statusBarView.contains(".onHover { isInside in"), true, "completed task rows track cursor entry and exit")
     expectEqual(statusBarView.contains("xmark.circle.fill"), true, "completed task rows show a compact corner delete icon")
@@ -1363,6 +1366,11 @@ private func testTemporaryFileShelfExpandedDropIntegration() {
         .first?
         .components(separatedBy: "if isExpanded, state.isFileShelfOverlayVisible")
         .first ?? ""
+    let primaryContentMountSection = sourceSlice(
+        overlay,
+        from: "if isPrimaryContentEntranceActive {",
+        until: "if isDataTimeRangeDrawerPresented {"
+    )
     let fileShelfOverlayMountSection = overlay
         .components(separatedBy: "FileShelfOverlayView(")
         .dropFirst()
@@ -1642,6 +1650,14 @@ private func testTemporaryFileShelfExpandedDropIntegration() {
     expectEqual(animationProfileSource.contains("primaryContentEntranceDelay: 0.40"), true, "primary content follows the navigation layer after a short visual separation")
     expectEqual(animationProfileSource.contains("primaryContentTransitionDistance: 6"), true, "primary content travels only a restrained six points from its source")
     expectEqual(overlay.contains("@State private var isPrimaryContentEntranceActive = false"), true, "primary content stays absent until the expanded shell is visually stable")
+    expectEqual(overlay.contains("@State private var mountedPrimaryFeatures: [IslandPrimaryFeature] = []"), true, "primary content tracks only features visited during the current expansion")
+    expectEqual(primaryContentMountSection.contains("if mountedPrimaryFeatures.contains(.tasks)"), true, "Tasks mounts lazily on first selection and then stays alive for feature transitions")
+    expectEqual(primaryContentMountSection.contains("if mountedPrimaryFeatures.contains(.files)"), true, "Files mounts lazily and preserves its icon cache while the island remains expanded")
+    expectEqual(primaryContentMountSection.contains("if mountedPrimaryFeatures.contains(.data)"), true, "Data mounts lazily without joining an unrelated cold expansion")
+    expectEqual(primaryContentMountSection.contains("switch state.selectedPrimaryFeature"), false, "feature switching retains visited content for explicit outgoing opacity and layer transitions")
+    expectEqual(overlay.contains("mountPrimaryFeature(state.selectedPrimaryFeature)"), true, "cold entrance mounts only the currently selected primary content")
+    expectEqual(overlay.contains("mountPrimaryFeature(feature)"), true, "selecting an unvisited feature mounts it without discarding previously visited content")
+    expectEqual(overlay.contains("mountedPrimaryFeatures.removeAll()"), true, "a completed collapse releases visited primary content before the next cold entrance")
     expectEqual(overlay.contains("@State private var primaryContentExitDeadline: Date?"), true, "primary content remembers only the active exit window for reversible reopening")
     expectEqual(overlay.contains("private var primaryContentEntranceDelay: TimeInterval"), true, "primary content uses a named entrance delay")
     expectEqual(overlay.contains("accessibilityReduceMotion ? 0 : animationProfile.primaryContentEntranceDelay"), true, "normal content timing comes from the shared profile while Reduce Motion removes the delay")

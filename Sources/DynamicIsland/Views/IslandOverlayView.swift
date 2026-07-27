@@ -21,6 +21,7 @@ struct IslandOverlayView: View {
     @State private var isTopBandEnergyActive = false
     @State private var topBandEnergyActivationSequence = 0
     @State private var isPrimaryContentEntranceActive = false
+    @State private var mountedPrimaryFeatures: [IslandPrimaryFeature] = []
     @State private var primaryContentEntranceSequence = 0
     @State private var primaryContentExitDeadline: Date?
     @State private var isDataTimeRangeDrawerPresented = false
@@ -496,17 +497,18 @@ struct IslandOverlayView: View {
             }
 
             if isPrimaryContentEntranceActive {
-                CodexTasksContentView(
-                    snapshot: state.codexStatusBarSnapshot,
-                    dismissedTaskKeys: state.dismissedCodexTaskKeys,
-                    isActive: isExpanded && state.selectedPrimaryFeature == .tasks,
-                    isApprovalAttachmentPresented: state.isCodexApprovalAttachmentPresented,
-                    approvalPresentation: state.codexApprovalPresentation,
-                    selectedTaskID: $state.selectedCodexTaskID,
-                    onDeleteTask: onDismissCodexTask,
-                    onUndoTask: onUndoCodexTask,
-                    onTaskSelection: onCodexTaskSelection,
-                    onExpansionHeightChange: onTasksExpansionHeightChange
+                if mountedPrimaryFeatures.contains(.tasks) {
+                    CodexTasksContentView(
+                        snapshot: state.codexStatusBarSnapshot,
+                        dismissedTaskKeys: state.dismissedCodexTaskKeys,
+                        isActive: isExpanded && state.selectedPrimaryFeature == .tasks,
+                        isApprovalAttachmentPresented: state.isCodexApprovalAttachmentPresented,
+                        approvalPresentation: state.codexApprovalPresentation,
+                        selectedTaskID: $state.selectedCodexTaskID,
+                        onDeleteTask: onDismissCodexTask,
+                        onUndoTask: onUndoCodexTask,
+                        onTaskSelection: onCodexTaskSelection,
+                        onExpansionHeightChange: onTasksExpansionHeightChange
                     )
                     .frame(width: primaryContentFrame.width, height: primaryContentFrame.height)
                     .position(x: primaryContentFrame.midX, y: primaryContentFrame.midY)
@@ -517,56 +519,61 @@ struct IslandOverlayView: View {
                     .accessibilityHidden(!isExpanded || state.selectedPrimaryFeature != .tasks)
                     .transition(primaryContentTransition)
                     .zIndex(state.selectedPrimaryFeature == .tasks ? 21 : 20)
+                }
 
-                FilesPrimaryContentView(
-                    shelf: state.temporaryFileShelf,
-                    selectedItemIDs: state.temporaryFileShelfSelectedItemIDs,
-                    airDropUndoItemCount: state.airDropUndoItemCount,
-                    isDropTargetActive: state.isFileDropTargetActive,
-                    isActive: isExpanded && state.selectedPrimaryFeature == .files,
-                    displayMode: state.filesDisplayMode,
-                    onAirDrop: fileShelfActions.onAirDropItems,
-                    onUndoAirDrop: fileShelfActions.onUndoAirDropItems,
-                    onDisplayModeChange: fileShelfActions.onSetFilesDisplayMode,
-                    onRemoveItems: fileShelfActions.onRemoveItems,
-                    onSelectItem: fileShelfActions.onSelectItem,
-                    onDragStarted: fileShelfActions.onDragStarted,
-                    onDragCompleted: fileShelfActions.onDragCompleted
-                )
-                .frame(width: filesPrimaryContentFrame.width, height: filesPrimaryContentFrame.height)
-                .position(x: filesPrimaryContentFrame.midX, y: filesPrimaryContentFrame.midY)
-                .opacity(state.selectedPrimaryFeature == .files ? 1 : 0)
-                .offset(y: primaryContentOffset(for: .files))
-                .disabled(!isExpanded || state.selectedPrimaryFeature != .files)
-                .allowsHitTesting(isExpanded && state.selectedPrimaryFeature == .files)
-                .accessibilityHidden(!isExpanded || state.selectedPrimaryFeature != .files)
-                .transition(primaryContentTransition)
-                .zIndex(state.selectedPrimaryFeature == .files ? 21 : 20)
+                if mountedPrimaryFeatures.contains(.files) {
+                    FilesPrimaryContentView(
+                        shelf: state.temporaryFileShelf,
+                        selectedItemIDs: state.temporaryFileShelfSelectedItemIDs,
+                        airDropUndoItemCount: state.airDropUndoItemCount,
+                        isDropTargetActive: state.isFileDropTargetActive,
+                        isActive: isExpanded && state.selectedPrimaryFeature == .files,
+                        displayMode: state.filesDisplayMode,
+                        onAirDrop: fileShelfActions.onAirDropItems,
+                        onUndoAirDrop: fileShelfActions.onUndoAirDropItems,
+                        onDisplayModeChange: fileShelfActions.onSetFilesDisplayMode,
+                        onRemoveItems: fileShelfActions.onRemoveItems,
+                        onSelectItem: fileShelfActions.onSelectItem,
+                        onDragStarted: fileShelfActions.onDragStarted,
+                        onDragCompleted: fileShelfActions.onDragCompleted
+                    )
+                    .frame(width: filesPrimaryContentFrame.width, height: filesPrimaryContentFrame.height)
+                    .position(x: filesPrimaryContentFrame.midX, y: filesPrimaryContentFrame.midY)
+                    .opacity(state.selectedPrimaryFeature == .files ? 1 : 0)
+                    .offset(y: primaryContentOffset(for: .files))
+                    .disabled(!isExpanded || state.selectedPrimaryFeature != .files)
+                    .allowsHitTesting(isExpanded && state.selectedPrimaryFeature == .files)
+                    .accessibilityHidden(!isExpanded || state.selectedPrimaryFeature != .files)
+                    .transition(primaryContentTransition)
+                    .zIndex(state.selectedPrimaryFeature == .files ? 21 : 20)
+                }
 
-                DataPrimaryContentView(
-                    presentation: state.dataUsagePresentation,
-                    selectedTimeRange: state.dataUsageTimeRange,
-                    isActive: isExpanded && state.selectedPrimaryFeature == .data,
-                    isTimeRangeDrawerPresented: isDataTimeRangeDrawerPresented,
-                    onTimeRangeDrawerPresentationChange: setDataTimeRangeDrawerPresented,
-                    onSelectTimeRange: { range in
-                        setDataTimeRangeDrawerPresented(false)
-                        onDataUsageTimeRangeChange(range)
-                    },
-                    onRefresh: {
-                        setDataTimeRangeDrawerPresented(false)
-                        onRefreshDataUsage()
-                    }
-                )
-                .frame(width: primaryContentFrame.width, height: primaryContentFrame.height)
-                .position(x: primaryContentFrame.midX, y: primaryContentFrame.midY)
-                .opacity(state.selectedPrimaryFeature == .data ? 1 : 0)
-                .offset(y: primaryContentOffset(for: .data))
-                .disabled(!isExpanded || state.selectedPrimaryFeature != .data)
-                .allowsHitTesting(isExpanded && state.selectedPrimaryFeature == .data)
-                .accessibilityHidden(!isExpanded || state.selectedPrimaryFeature != .data)
-                .transition(primaryContentTransition)
-                .zIndex(isDataTimeRangeDrawerPresented ? 24 : (state.selectedPrimaryFeature == .data ? 21 : 20))
+                if mountedPrimaryFeatures.contains(.data) {
+                    DataPrimaryContentView(
+                        presentation: state.dataUsagePresentation,
+                        selectedTimeRange: state.dataUsageTimeRange,
+                        isActive: isExpanded && state.selectedPrimaryFeature == .data,
+                        isTimeRangeDrawerPresented: isDataTimeRangeDrawerPresented,
+                        onTimeRangeDrawerPresentationChange: setDataTimeRangeDrawerPresented,
+                        onSelectTimeRange: { range in
+                            setDataTimeRangeDrawerPresented(false)
+                            onDataUsageTimeRangeChange(range)
+                        },
+                        onRefresh: {
+                            setDataTimeRangeDrawerPresented(false)
+                            onRefreshDataUsage()
+                        }
+                    )
+                    .frame(width: primaryContentFrame.width, height: primaryContentFrame.height)
+                    .position(x: primaryContentFrame.midX, y: primaryContentFrame.midY)
+                    .opacity(state.selectedPrimaryFeature == .data ? 1 : 0)
+                    .offset(y: primaryContentOffset(for: .data))
+                    .disabled(!isExpanded || state.selectedPrimaryFeature != .data)
+                    .allowsHitTesting(isExpanded && state.selectedPrimaryFeature == .data)
+                    .accessibilityHidden(!isExpanded || state.selectedPrimaryFeature != .data)
+                    .transition(primaryContentTransition)
+                    .zIndex(isDataTimeRangeDrawerPresented ? 24 : (state.selectedPrimaryFeature == .data ? 21 : 20))
+                }
             }
 
             if isDataTimeRangeDrawerPresented {
@@ -707,6 +714,11 @@ struct IslandOverlayView: View {
                 schedulePrimaryContentEntrance(expanded: expanded)
             }
             .onChange(of: state.selectedPrimaryFeature) { _, feature in
+                if isPrimaryContentEntranceActive {
+                    withAnimation(primaryContentEntranceAnimation) {
+                        mountPrimaryFeature(feature)
+                    }
+                }
                 if feature != .data {
                     setDataTimeRangeDrawerPresented(false)
                 }
@@ -763,11 +775,16 @@ struct IslandOverlayView: View {
         let sequence = primaryContentEntranceSequence
 
         guard expanded else {
+            let exitDuration = primaryContentExitDuration
             primaryContentExitDeadline = isPrimaryContentEntranceActive
-                ? Date().addingTimeInterval(primaryContentExitDuration)
+                ? Date().addingTimeInterval(exitDuration)
                 : nil
             withAnimation(primaryContentExitAnimation) {
                 isPrimaryContentEntranceActive = false
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + exitDuration) {
+                guard sequence == primaryContentEntranceSequence, !state.isExpanded else { return }
+                mountedPrimaryFeatures.removeAll()
             }
             return
         }
@@ -780,8 +797,19 @@ struct IslandOverlayView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + entranceDelay) {
             guard sequence == primaryContentEntranceSequence, state.isExpanded else { return }
             withAnimation(primaryContentEntranceAnimation) {
+                mountPrimaryFeature(state.selectedPrimaryFeature)
                 isPrimaryContentEntranceActive = true
             }
+        }
+    }
+
+    private func mountPrimaryFeature(_ feature: IslandPrimaryFeature) {
+        switch feature {
+        case .tasks, .files, .data:
+            guard !mountedPrimaryFeatures.contains(feature) else { return }
+            mountedPrimaryFeatures.append(feature)
+        case .tools, .settings:
+            return
         }
     }
 }
