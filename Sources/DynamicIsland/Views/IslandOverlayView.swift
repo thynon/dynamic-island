@@ -6,11 +6,24 @@ struct IslandOverlayView: View {
     let metrics: NotchMetrics
     @ObservedObject var state: IslandOverlayState
     let onExpansionChange: @MainActor (Bool) -> Void
+    let onPrimaryFeatureChange: @MainActor (IslandPrimaryFeature) -> Void
+    let onDataUsageTimeRangeChange: @MainActor (UsageTimeRange) -> Void
+    let onRefreshDataUsage: @MainActor () -> Void
     let onDismissCodexTask: @MainActor (CodexTaskStatus) -> Void
     let onUndoCodexTask: @MainActor (CodexTaskStatus) -> Void
+    let onCodexTaskSelection: @MainActor (String) -> Void
+    let onTasksExpansionHeightChange: @MainActor (CGFloat) -> Void
+    let onApprovalDecision: @MainActor (CodexApprovalDecision, CodexApprovalRequest.ID) -> Void
+    let onOpenCodexApproval: @MainActor (CodexApprovalRequest.ID) -> Void
+    let onRetryCodexApproval: @MainActor (CodexApprovalRequest.ID) -> Void
     let fileShelfActions: FileShelfActions
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var isTopBandEnergyActive = false
     @State private var topBandEnergyActivationSequence = 0
+    @State private var isPrimaryContentEntranceActive = false
+    @State private var primaryContentEntranceSequence = 0
+    @State private var primaryContentExitDeadline: Date?
+    @State private var isDataTimeRangeDrawerPresented = false
 
     private let animationProfile = IslandAnimationProfile.default
     private let musicSkipIconSize: CGFloat = 18
@@ -20,15 +33,31 @@ struct IslandOverlayView: View {
         metrics: NotchMetrics,
         state: IslandOverlayState,
         onExpansionChange: @escaping @MainActor (Bool) -> Void = { _ in },
+        onPrimaryFeatureChange: @escaping @MainActor (IslandPrimaryFeature) -> Void = { _ in },
+        onDataUsageTimeRangeChange: @escaping @MainActor (UsageTimeRange) -> Void = { _ in },
+        onRefreshDataUsage: @escaping @MainActor () -> Void = {},
         onDismissCodexTask: @escaping @MainActor (CodexTaskStatus) -> Void = { _ in },
         onUndoCodexTask: @escaping @MainActor (CodexTaskStatus) -> Void = { _ in },
+        onCodexTaskSelection: @escaping @MainActor (String) -> Void = { _ in },
+        onTasksExpansionHeightChange: @escaping @MainActor (CGFloat) -> Void = { _ in },
+        onApprovalDecision: @escaping @MainActor (CodexApprovalDecision, CodexApprovalRequest.ID) -> Void = { _, _ in },
+        onOpenCodexApproval: @escaping @MainActor (CodexApprovalRequest.ID) -> Void = { _ in },
+        onRetryCodexApproval: @escaping @MainActor (CodexApprovalRequest.ID) -> Void = { _ in },
         fileShelfActions: FileShelfActions = FileShelfActions()
     ) {
         self.metrics = metrics
         self.state = state
         self.onExpansionChange = onExpansionChange
+        self.onPrimaryFeatureChange = onPrimaryFeatureChange
+        self.onDataUsageTimeRangeChange = onDataUsageTimeRangeChange
+        self.onRefreshDataUsage = onRefreshDataUsage
         self.onDismissCodexTask = onDismissCodexTask
         self.onUndoCodexTask = onUndoCodexTask
+        self.onCodexTaskSelection = onCodexTaskSelection
+        self.onTasksExpansionHeightChange = onTasksExpansionHeightChange
+        self.onApprovalDecision = onApprovalDecision
+        self.onOpenCodexApproval = onOpenCodexApproval
+        self.onRetryCodexApproval = onRetryCodexApproval
         self.fileShelfActions = fileShelfActions
     }
 
@@ -36,12 +65,39 @@ struct IslandOverlayView: View {
         state.isExpanded
     }
 
+    private var isShellLayoutExpanded: Bool {
+        accessibilityReduceMotion ? state.usesOpenCanvas : isExpanded
+    }
+
+    private var primaryFeatureSelection: Binding<IslandPrimaryFeature> {
+        Binding(
+            get: { state.selectedPrimaryFeature },
+            set: { feature in
+                setDataTimeRangeDrawerPresented(false)
+                onPrimaryFeatureChange(feature)
+            }
+        )
+    }
+
+    private var hasManualCodexApproval: Bool {
+        state.codexApprovalPresentation.pendingCount > 0
+            || state.codexStatusBarSnapshot.tasks.contains {
+                $0.approvalState.requiresManualApproval
+            }
+    }
+
     private var shellWidth: CGFloat {
-        isExpanded ? metrics.openWidth : closedShellWidth + musicSkipEdgeExpansion
+        isShellLayoutExpanded ? metrics.openWidth : closedShellWidth + musicSkipEdgeExpansion
     }
 
     private var closedShellWidth: CGFloat {
-        showsMusicAccessories ? metrics.musicClosedShellWidth : metrics.closedShellWidth
+        if accessibilityReduceMotion,
+           state.isShellHidden,
+           state.musicPlayback.isPlaying,
+           metrics.closedMusicAccessorySize > 0 {
+            return metrics.musicClosedShellWidth
+        }
+        return showsMusicAccessories ? metrics.musicClosedShellWidth : metrics.closedShellWidth
     }
 
     private var closedCanvasHorizontalSlack: CGFloat {
@@ -49,8 +105,8 @@ struct IslandOverlayView: View {
     }
 
     private var shellHeight: CGFloat {
-        if isExpanded {
-            metrics.openHeight
+        if isShellLayoutExpanded {
+            metrics.openHeight + state.codexTasksDetailExpansionHeight
         } else if showsTrackInfo {
             metrics.musicTrackInfoShellHeight
         } else {
@@ -59,11 +115,19 @@ struct IslandOverlayView: View {
     }
 
     private var canvasWidth: CGFloat {
-        state.usesOpenCanvas ? metrics.openWidth : metrics.musicClosedShellWidth + closedCanvasHorizontalSlack
+        let baseWidth = state.usesOpenCanvas
+            ? metrics.openWidth
+            : metrics.musicClosedShellWidth + closedCanvasHorizontalSlack
+        guard state.usesOpenCanvas, state.isCodexApprovalAttachmentPresented else {
+            return baseWidth
+        }
+        return baseWidth + approvalLayout.additionalCanvasWidth
     }
 
     private var canvasHeight: CGFloat {
-        state.usesOpenCanvas ? metrics.openCanvasWindowSize.height : metrics.musicTrackInfoShellHeight + NotchMetrics.closedHoverBottomSlack
+        state.usesOpenCanvas
+            ? metrics.openHeight + state.codexTasksDetailExpansionHeight + NotchMetrics.defaultClosedCanvasBottomSlack
+            : metrics.musicTrackInfoShellHeight + NotchMetrics.closedHoverBottomSlack
     }
 
     private var showsHoverPreview: Bool {
@@ -71,11 +135,19 @@ struct IslandOverlayView: View {
     }
 
     private var hoverPreviewScale: CGFloat {
-        showsHoverPreview ? 1.035 : 1
+        accessibilityReduceMotion ? 1 : (showsHoverPreview ? 1.035 : 1)
     }
 
     private var hoverShadowOpacity: Double {
         showsHoverPreview ? 0.12 : 0
+    }
+
+    private var hoverShadowRadius: CGFloat {
+        accessibilityReduceMotion ? 6 : (showsHoverPreview ? 6 : 0)
+    }
+
+    private var hoverShadowYOffset: CGFloat {
+        accessibilityReduceMotion ? 1 : (showsHoverPreview ? 1 : 0)
     }
 
     private var shellFillColor: Color {
@@ -87,14 +159,14 @@ struct IslandOverlayView: View {
     }
 
     private var musicSkipProgress: CGFloat {
-        guard state.musicSkipFeedbackDirection != nil, showsMusicAccessories, !showsTrackInfo, !isExpanded else {
+        guard state.musicSkipFeedbackDirection != nil, showsMusicAccessories, !showsTrackInfo, !isShellLayoutExpanded else {
             return 0
         }
         return min(1, max(0, state.musicSkipGestureProgress))
     }
 
     private var musicSkipEdgeExpansion: CGFloat {
-        NotchMetrics.musicSkipEdgeExpansionMax * musicSkipProgress
+        accessibilityReduceMotion ? 0 : NotchMetrics.musicSkipEdgeExpansionMax * musicSkipProgress
     }
 
     private var shellHorizontalScale: CGFloat {
@@ -123,7 +195,7 @@ struct IslandOverlayView: View {
     }
 
     private var showsTrackInfo: Bool {
-        showsMusicAccessories && !isExpanded && state.isTrackInfoPresented
+        showsMusicAccessories && !isShellLayoutExpanded && state.isTrackInfoPresented
     }
 
     private var musicArtworkSize: CGFloat {
@@ -131,15 +203,15 @@ struct IslandOverlayView: View {
     }
 
     private var musicArtworkCenterX: CGFloat {
-        (isExpanded ? metrics.expandedMusicArtworkCenterX : metrics.closedLeftMusicAccessoryCenterX) + contentOriginShiftX
+        (isShellLayoutExpanded ? metrics.expandedMusicArtworkCenterX : metrics.closedLeftMusicAccessoryCenterX) + contentOriginShiftX
     }
 
     private var musicWaveformCenterX: CGFloat {
-        (isExpanded ? metrics.expandedMusicWaveformCenterX : metrics.closedRightMusicAccessoryCenterX) + contentOriginShiftX
+        (isShellLayoutExpanded ? metrics.expandedMusicWaveformCenterX : metrics.closedRightMusicAccessoryCenterX) + contentOriginShiftX
     }
 
     private var musicAccessoryCenterY: CGFloat {
-        isExpanded ? metrics.expandedMusicAccessoryCenterY : metrics.closedMusicAccessoryCenterY
+        isShellLayoutExpanded ? metrics.expandedMusicAccessoryCenterY : metrics.closedMusicAccessoryCenterY
     }
 
     private var musicArtworkCenterY: CGFloat {
@@ -159,10 +231,11 @@ struct IslandOverlayView: View {
 
     private func musicSkipFeedbackIcon(_ direction: MusicSkipDirection) -> some View {
         let progress = min(1, max(0, state.musicSkipGestureProgress))
+        let scale = accessibilityReduceMotion ? 1 : (state.isMusicSkipArmed ? 1.08 : 0.86 + (progress * 0.12))
         return MusicSkipGlyph(direction: direction)
             .frame(width: musicSkipIconSize, height: musicSkipIconSize)
             .opacity(Double(state.isMusicSkipArmed ? 1 : progress))
-            .scaleEffect(state.isMusicSkipArmed ? 1.08 : 0.86 + (progress * 0.12))
+            .scaleEffect(scale)
             .position(
                 x: musicSkipFeedbackCenterX(for: direction),
                 y: musicAccessoryCenterY
@@ -184,7 +257,7 @@ struct IslandOverlayView: View {
     }
 
     private var hiddenShellHorizontalScale: CGFloat {
-        state.isShellHidden ? 0.04 : 1
+        accessibilityReduceMotion ? 1 : (state.isShellHidden ? 0.04 : 1)
     }
 
     private var expandedTemporaryShelfWidth: CGFloat {
@@ -208,7 +281,11 @@ struct IslandOverlayView: View {
     }
 
     private var primaryContentFrame: CGRect {
-        metrics.expandedPrimaryContentLayout.tasksContentFrame
+        IslandPrimaryContentLayout(metrics: metrics, shellHeight: shellHeight).tasksContentFrame
+    }
+
+    private var approvalLayout: CodexTasksApprovalLayout {
+        CodexTasksApprovalLayout(metrics: metrics, shellHeight: shellHeight)
     }
 
     private var filesPrimaryContentFrame: CGRect {
@@ -229,28 +306,188 @@ struct IslandOverlayView: View {
         animationProfile.expandResponse + 0.08
     }
 
-    private var expandAnimation: Animation {
-        .interactiveSpring(
+    private var primaryContentEntranceDelay: TimeInterval {
+        accessibilityReduceMotion ? 0 : animationProfile.primaryContentEntranceDelay
+    }
+
+    private var expandAnimation: Animation? {
+        accessibilityReduceMotion ? nil : .interactiveSpring(
             response: animationProfile.expandResponse,
             dampingFraction: animationProfile.expandDampingFraction,
             blendDuration: animationProfile.expandBlendDuration
         )
     }
 
-    private var collapseAnimation: Animation {
-        .easeOut(duration: animationProfile.collapseDuration)
+    private var collapseAnimation: Animation? {
+        accessibilityReduceMotion ? nil : .easeOut(duration: animationProfile.collapseDuration)
+    }
+
+    private var tasksHeightAnimation: Animation? {
+        accessibilityReduceMotion ? nil : .spring(
+            response: animationProfile.primaryFeatureSelectionResponse,
+            dampingFraction: animationProfile.primaryFeatureSelectionDamping,
+            blendDuration: 0
+        )
+    }
+
+    private var fileShelfTransition: AnyTransition {
+        accessibilityReduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom))
+    }
+
+    private var musicAccessoryTransition: AnyTransition {
+        accessibilityReduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.94))
+    }
+
+    private var trackInfoTransition: AnyTransition {
+        accessibilityReduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top))
+    }
+
+    private var primaryContentTransition: AnyTransition {
+        accessibilityReduceMotion
+            ? .opacity
+            : .opacity.combined(
+                with: .offset(y: -animationProfile.primaryContentTransitionDistance)
+            )
+    }
+
+    private var approvalAttachmentTransition: AnyTransition {
+        accessibilityReduceMotion
+            ? .opacity
+            : .opacity.combined(
+                with: .offset(x: -animationProfile.primaryFeatureButtonSlideDistance)
+            )
+    }
+
+    private var primaryContentEntranceAnimation: Animation {
+        accessibilityReduceMotion
+            ? .easeOut(duration: animationProfile.reducedMotionFadeDuration)
+            : .spring(
+                response: animationProfile.primaryFeatureSelectionResponse,
+                dampingFraction: animationProfile.primaryFeatureSelectionDamping
+            )
+    }
+
+    private var primaryContentExitAnimation: Animation {
+        .easeOut(duration: primaryContentExitDuration)
+    }
+
+    private var primaryContentExitDuration: TimeInterval {
+        accessibilityReduceMotion
+            ? animationProfile.reducedMotionFadeDuration
+            : animationProfile.attachedElementCollapseDuration
+    }
+
+    private func primaryContentOffset(for feature: IslandPrimaryFeature) -> CGFloat {
+        guard !accessibilityReduceMotion, state.selectedPrimaryFeature != feature else { return 0 }
+        return -animationProfile.primaryContentTransitionDistance
+    }
+
+    @ViewBuilder
+    private func reducedMotionFade<Value: Equatable, Content: View>(
+        value: Value,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        if accessibilityReduceMotion {
+            content()
+                .animation(
+                    .easeOut(duration: animationProfile.reducedMotionFadeDuration),
+                    value: value
+                )
+        } else {
+            content()
+        }
+    }
+
+    private var primaryFeatureCanvasMask: some View {
+        Rectangle()
+            .frame(width: shellWidth, height: metrics.expandedTopStatusBandLayout.bandHeight)
+            .frame(
+                width: canvasWidth,
+                height: metrics.expandedTopStatusBandLayout.bandHeight,
+                alignment: state.isCodexApprovalAttachmentPresented ? .topLeading : .top
+            )
+            .animation(isExpanded ? expandAnimation : collapseAnimation, value: shellWidth)
+    }
+
+    private var primaryFeatureCanvasLayer: some View {
+        ZStack(alignment: .topLeading) {
+            PrimaryFeatureSwitcher(
+                selection: primaryFeatureSelection,
+                isExpanded: isExpanded,
+                hasManualCodexApproval: hasManualCodexApproval,
+                animationProfile: animationProfile
+            )
+                .frame(width: primaryNavigationFrame.width, height: primaryNavigationFrame.height)
+                .position(x: primaryNavigationFrame.midX, y: primaryNavigationFrame.midY)
+                .disabled(!isExpanded)
+                .allowsHitTesting(isExpanded)
+                .accessibilityHidden(!isExpanded)
+
+            FilesPrimaryFeatureButton(
+                count: state.temporaryFileShelf.items.count,
+                isSelected: state.selectedPrimaryFeature == .files,
+                isExpanded: isExpanded,
+                animationProfile: animationProfile
+            ) {
+                setDataTimeRangeDrawerPresented(false)
+                fileShelfActions.onOpenFilesPrimaryFeature()
+            }
+            .frame(width: filesPrimaryFeatureFrame.width, height: filesPrimaryFeatureFrame.height)
+            .position(x: filesPrimaryFeatureFrame.midX, y: filesPrimaryFeatureFrame.midY)
+            .disabled(!isExpanded)
+            .allowsHitTesting(isExpanded)
+            .accessibilityHidden(!isExpanded)
+        }
+        .frame(width: canvasWidth, height: metrics.expandedTopStatusBandLayout.bandHeight, alignment: .topLeading)
+        .mask {
+            primaryFeatureCanvasMask
+        }
+        .zIndex(4)
     }
 
     var body: some View {
-        islandShell
-            .frame(width: canvasWidth, height: canvasHeight, alignment: .top)
+        ZStack(alignment: .topLeading) {
+            islandShell
+                .frame(
+                    width: state.usesOpenCanvas ? metrics.openWidth : canvasWidth,
+                    height: canvasHeight,
+                    alignment: .top
+                )
+
+            if state.isCodexApprovalAttachmentPresented,
+               let request = state.codexApprovalPresentation.request,
+               request.threadID == state.selectedCodexTaskID {
+                CodexApprovalActionView(
+                    presentation: state.codexApprovalPresentation,
+                    onDecision: onApprovalDecision,
+                    onOpenCodexApproval: onOpenCodexApproval,
+                    onRetry: onRetryCodexApproval
+                )
+                .frame(
+                    width: approvalLayout.attachmentFrame.width,
+                    height: approvalLayout.attachmentFrame.height
+                )
+                .position(
+                    x: approvalLayout.attachmentFrame.midX,
+                    y: approvalLayout.attachmentFrame.midY
+                )
+                .disabled(!isExpanded || state.selectedPrimaryFeature != .tasks)
+                .allowsHitTesting(isExpanded && state.selectedPrimaryFeature == .tasks)
+                .accessibilityHidden(!isExpanded || state.selectedPrimaryFeature != .tasks)
+                .transition(approvalAttachmentTransition)
+                .zIndex(3)
+            }
+
+            primaryFeatureCanvasLayer
+        }
+        .frame(width: canvasWidth, height: canvasHeight, alignment: .topLeading)
     }
 
     private var islandShell: some View {
         ZStack(alignment: .topLeading) {
             shellFillColor
 
-            if isExpanded && state.isTopBandEnergyEffectEnabled && isTopBandEnergyActive {
+            if isExpanded && state.isTopBandEnergyEffectEnabled && isTopBandEnergyActive && !accessibilityReduceMotion {
                 TopBandEnergyEffectView()
                     .frame(width: topBandEnergyFrame.width, height: topBandEnergyFrame.height)
                     .position(x: topBandEnergyFrame.midX, y: topBandEnergyFrame.midY)
@@ -258,48 +495,35 @@ struct IslandOverlayView: View {
                     .accessibilityHidden(true)
             }
 
-            PrimaryFeatureSwitcher(
-                selection: $state.selectedPrimaryFeature,
-                isExpanded: isExpanded,
-                animationProfile: animationProfile
-            )
-                .frame(width: primaryNavigationFrame.width, height: primaryNavigationFrame.height)
-                .position(x: primaryNavigationFrame.midX, y: primaryNavigationFrame.midY)
-                .allowsHitTesting(isExpanded)
-                .zIndex(4)
-
-            FilesPrimaryFeatureButton(
-                count: state.temporaryFileShelf.items.count,
-                isSelected: state.selectedPrimaryFeature == .files,
-                isExpanded: isExpanded
-            ) {
-                fileShelfActions.onOpenFilesPrimaryFeature()
-            }
-            .frame(width: filesPrimaryFeatureFrame.width, height: filesPrimaryFeatureFrame.height)
-            .position(x: filesPrimaryFeatureFrame.midX, y: filesPrimaryFeatureFrame.midY)
-            .allowsHitTesting(isExpanded)
-            .zIndex(4)
-
-            if isExpanded && state.selectedPrimaryFeature == .tasks {
+            if isPrimaryContentEntranceActive {
                 CodexTasksContentView(
                     snapshot: state.codexStatusBarSnapshot,
                     dismissedTaskKeys: state.dismissedCodexTaskKeys,
+                    isActive: isExpanded && state.selectedPrimaryFeature == .tasks,
+                    isApprovalAttachmentPresented: state.isCodexApprovalAttachmentPresented,
+                    approvalPresentation: state.codexApprovalPresentation,
+                    selectedTaskID: $state.selectedCodexTaskID,
                     onDeleteTask: onDismissCodexTask,
-                    onUndoTask: onUndoCodexTask
-                )
+                    onUndoTask: onUndoCodexTask,
+                    onTaskSelection: onCodexTaskSelection,
+                    onExpansionHeightChange: onTasksExpansionHeightChange
+                    )
                     .frame(width: primaryContentFrame.width, height: primaryContentFrame.height)
                     .position(x: primaryContentFrame.midX, y: primaryContentFrame.midY)
-                    .allowsHitTesting(false)
-                    .transition(.opacity)
-                    .zIndex(21)
-            }
+                    .opacity(state.selectedPrimaryFeature == .tasks ? 1 : 0)
+                    .offset(y: primaryContentOffset(for: .tasks))
+                    .disabled(!isExpanded || state.selectedPrimaryFeature != .tasks)
+                    .allowsHitTesting(isExpanded && state.selectedPrimaryFeature == .tasks)
+                    .accessibilityHidden(!isExpanded || state.selectedPrimaryFeature != .tasks)
+                    .transition(primaryContentTransition)
+                    .zIndex(state.selectedPrimaryFeature == .tasks ? 21 : 20)
 
-            if isExpanded && state.selectedPrimaryFeature == .files {
                 FilesPrimaryContentView(
                     shelf: state.temporaryFileShelf,
                     selectedItemIDs: state.temporaryFileShelfSelectedItemIDs,
                     airDropUndoItemCount: state.airDropUndoItemCount,
                     isDropTargetActive: state.isFileDropTargetActive,
+                    isActive: isExpanded && state.selectedPrimaryFeature == .files,
                     displayMode: state.filesDisplayMode,
                     onAirDrop: fileShelfActions.onAirDropItems,
                     onUndoAirDrop: fileShelfActions.onUndoAirDropItems,
@@ -311,8 +535,47 @@ struct IslandOverlayView: View {
                 )
                 .frame(width: filesPrimaryContentFrame.width, height: filesPrimaryContentFrame.height)
                 .position(x: filesPrimaryContentFrame.midX, y: filesPrimaryContentFrame.midY)
-                .transition(.opacity)
-                .zIndex(2)
+                .opacity(state.selectedPrimaryFeature == .files ? 1 : 0)
+                .offset(y: primaryContentOffset(for: .files))
+                .disabled(!isExpanded || state.selectedPrimaryFeature != .files)
+                .allowsHitTesting(isExpanded && state.selectedPrimaryFeature == .files)
+                .accessibilityHidden(!isExpanded || state.selectedPrimaryFeature != .files)
+                .transition(primaryContentTransition)
+                .zIndex(state.selectedPrimaryFeature == .files ? 21 : 20)
+
+                DataPrimaryContentView(
+                    presentation: state.dataUsagePresentation,
+                    selectedTimeRange: state.dataUsageTimeRange,
+                    isActive: isExpanded && state.selectedPrimaryFeature == .data,
+                    isTimeRangeDrawerPresented: isDataTimeRangeDrawerPresented,
+                    onTimeRangeDrawerPresentationChange: setDataTimeRangeDrawerPresented,
+                    onSelectTimeRange: { range in
+                        setDataTimeRangeDrawerPresented(false)
+                        onDataUsageTimeRangeChange(range)
+                    },
+                    onRefresh: {
+                        setDataTimeRangeDrawerPresented(false)
+                        onRefreshDataUsage()
+                    }
+                )
+                .frame(width: primaryContentFrame.width, height: primaryContentFrame.height)
+                .position(x: primaryContentFrame.midX, y: primaryContentFrame.midY)
+                .opacity(state.selectedPrimaryFeature == .data ? 1 : 0)
+                .offset(y: primaryContentOffset(for: .data))
+                .disabled(!isExpanded || state.selectedPrimaryFeature != .data)
+                .allowsHitTesting(isExpanded && state.selectedPrimaryFeature == .data)
+                .accessibilityHidden(!isExpanded || state.selectedPrimaryFeature != .data)
+                .transition(primaryContentTransition)
+                .zIndex(isDataTimeRangeDrawerPresented ? 24 : (state.selectedPrimaryFeature == .data ? 21 : 20))
+            }
+
+            if isDataTimeRangeDrawerPresented {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        setDataTimeRangeDrawerPresented(false)
+                    }
+                    .zIndex(23)
             }
 
             if isExpanded, state.isFileShelfOverlayVisible {
@@ -335,42 +598,50 @@ struct IslandOverlayView: View {
                 )
                 .frame(width: expandedTemporaryShelfWidth, height: expandedTemporaryShelfHeight)
                 .position(x: metrics.openWidth / 2, y: expandedTemporaryShelfCenterY)
-                .transition(.opacity.combined(with: .move(edge: .bottom)))
-                .zIndex(3)
+                .transition(fileShelfTransition)
+                .zIndex(22)
             }
 
-            if showsMusicAccessories {
-                ClosedMusicAvatarView(artworkData: state.musicPlayback.artworkData)
-                    .frame(width: musicArtworkSize, height: musicArtworkSize)
-                    .position(
-                        x: musicArtworkCenterX,
-                        y: musicArtworkCenterY
-                    )
-                    .transition(.opacity.combined(with: .scale(scale: 0.72)))
+            reducedMotionFade(value: showsMusicAccessories) {
+                Group {
+                    if showsMusicAccessories {
+                        ClosedMusicAvatarView(artworkData: state.musicPlayback.artworkData)
+                            .frame(width: musicArtworkSize, height: musicArtworkSize)
+                            .position(
+                                x: musicArtworkCenterX,
+                                y: musicArtworkCenterY
+                            )
+                            .transition(musicAccessoryTransition)
 
-                ClosedMusicWaveformView(snapshot: state.musicPlayback.waveform)
-                    .frame(width: metrics.closedMusicAccessorySize, height: metrics.closedMusicAccessorySize)
-                    .position(
-                        x: musicWaveformCenterX,
-                        y: musicAccessoryCenterY
-                    )
-                    .transition(.opacity.combined(with: .scale(scale: 0.72)))
+                        ClosedMusicWaveformView(snapshot: state.musicPlayback.waveform)
+                            .frame(width: metrics.closedMusicAccessorySize, height: metrics.closedMusicAccessorySize)
+                            .position(
+                                x: musicWaveformCenterX,
+                                y: musicAccessoryCenterY
+                            )
+                            .transition(musicAccessoryTransition)
 
-                if showsTrackInfo {
-                    VStack(alignment: .center, spacing: 2) {
-                        Text(trackTitleText)
-                            .font(.system(size: 12, weight: .semibold))
-                            .lineLimit(1)
-                        Text(trackArtistText)
-                            .font(.system(size: 10, weight: .regular))
-                            .lineLimit(1)
-                            .opacity(0.68)
+                        reducedMotionFade(value: showsTrackInfo) {
+                            Group {
+                                if showsTrackInfo {
+                                    VStack(alignment: .center, spacing: 2) {
+                                        Text(trackTitleText)
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .lineLimit(1)
+                                        Text(trackArtistText)
+                                            .font(.system(size: 10, weight: .regular))
+                                            .lineLimit(1)
+                                            .opacity(0.68)
+                                    }
+                                    .foregroundStyle(foregroundContentColor)
+                                    .multilineTextAlignment(.center)
+                                    .frame(width: 190, alignment: .center)
+                                    .position(x: (metrics.musicClosedShellWidth / 2) + contentOriginShiftX, y: trackInfoTextCenterY)
+                                    .transition(trackInfoTransition)
+                                }
+                            }
+                        }
                     }
-                    .foregroundStyle(foregroundContentColor)
-                    .multilineTextAlignment(.center)
-                    .frame(width: 190, alignment: .center)
-                    .position(x: (metrics.musicClosedShellWidth / 2) + contentOriginShiftX, y: trackInfoTextCenterY)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
 
@@ -384,7 +655,7 @@ struct IslandOverlayView: View {
                     metrics: metrics,
                     shellWidth: shellWidth,
                     shellHeight: shellHeight,
-                    isExpanded: isExpanded,
+                    isExpanded: isShellLayoutExpanded,
                     isMusicShell: showsMusicAccessories,
                     hasCameraHousing: state.calibrationHasCameraHousing
                 )
@@ -394,9 +665,9 @@ struct IslandOverlayView: View {
             .frame(width: shellWidth, height: shellHeight, alignment: .top)
             .clipShape(
                 IslandShape(
-                    topCornerRadius: isExpanded ? metrics.openTopCornerRadius : metrics.closedTopCornerRadius,
-                    concaveTopRadius: isExpanded ? metrics.openTopCornerRadius : metrics.closedConcaveTopRadius,
-                    bottomCornerRadius: isExpanded ? metrics.openBottomCornerRadius : metrics.closedBottomCornerRadius,
+                    topCornerRadius: isShellLayoutExpanded ? metrics.openTopCornerRadius : metrics.closedTopCornerRadius,
+                    concaveTopRadius: isShellLayoutExpanded ? metrics.openTopCornerRadius : metrics.closedConcaveTopRadius,
+                    bottomCornerRadius: isShellLayoutExpanded ? metrics.openBottomCornerRadius : metrics.closedBottomCornerRadius,
                     baseHeight: shellHeight
                 )
             )
@@ -408,9 +679,9 @@ struct IslandOverlayView: View {
             .opacity(hiddenShellOpacity)
             .shadow(
                 color: .black.opacity(hoverShadowOpacity),
-                radius: showsHoverPreview ? 6 : 0,
+                radius: hoverShadowRadius,
                 x: 0,
-                y: showsHoverPreview ? 1 : 0
+                y: hoverShadowYOffset
             )
             .onTapGesture {
                 if !isExpanded && !state.isShellHidden {
@@ -418,25 +689,60 @@ struct IslandOverlayView: View {
                 }
             }
             .animation(isExpanded ? expandAnimation : collapseAnimation, value: isExpanded)
-            .animation(.easeInOut(duration: 0.18), value: state.musicPlayback.isPlaying)
-            .animation(.easeInOut(duration: 0.22), value: showsMusicAccessories)
-            .animation(.linear(duration: 0.22), value: state.isTrackInfoPresented)
-            .animation(.interactiveSpring(response: 0.18, dampingFraction: 0.82), value: state.musicSkipGestureProgress)
-            .animation(.easeInOut(duration: 0.16), value: state.musicSkipFeedbackDirection)
-            .animation(.easeInOut(duration: 0.22), value: state.isShellHidden)
-            .animation(.easeOut(duration: 0.14), value: state.isHovered)
-            .animation(.easeOut(duration: 0.14), value: state.isFileDropTargetActive)
-            .animation(.easeOut(duration: 0.14), value: state.isFileShelfOverlayVisible)
-            .animation(.easeInOut(duration: 0.18), value: state.selectedPrimaryFeature)
+            .animation(tasksHeightAnimation, value: state.codexTasksDetailExpansionHeight)
+            .animation(accessibilityReduceMotion ? nil : .easeOut(duration: animationProfile.musicAccessoryTransitionDuration), value: showsMusicAccessories)
+            .animation(.easeOut(duration: accessibilityReduceMotion ? animationProfile.reducedMotionFadeDuration : 0.14), value: state.isHovered)
+            .animation(.easeOut(duration: accessibilityReduceMotion ? animationProfile.reducedMotionFadeDuration : 0.14), value: state.isFileDropTargetActive)
+            .animation(.easeOut(duration: accessibilityReduceMotion ? animationProfile.reducedMotionFadeDuration : 0.14), value: state.isFileShelfOverlayVisible)
+            .animation(primaryContentEntranceAnimation, value: state.selectedPrimaryFeature)
             .onAppear {
-                scheduleTopBandEnergyActivation(expanded: isExpanded && state.isTopBandEnergyEffectEnabled)
+                scheduleTopBandEnergyActivation(expanded: isExpanded && state.isTopBandEnergyEffectEnabled && !accessibilityReduceMotion)
+                schedulePrimaryContentEntrance(expanded: isExpanded)
             }
             .onChange(of: isExpanded) { _, expanded in
-                scheduleTopBandEnergyActivation(expanded: expanded && state.isTopBandEnergyEffectEnabled)
+                if !expanded {
+                    setDataTimeRangeDrawerPresented(false)
+                }
+                scheduleTopBandEnergyActivation(expanded: expanded && state.isTopBandEnergyEffectEnabled && !accessibilityReduceMotion)
+                schedulePrimaryContentEntrance(expanded: expanded)
+            }
+            .onChange(of: state.selectedPrimaryFeature) { _, feature in
+                if feature != .data {
+                    setDataTimeRangeDrawerPresented(false)
+                }
+            }
+            .onChange(of: state.isShellHidden) { _, hidden in
+                if hidden {
+                    setDataTimeRangeDrawerPresented(false)
+                }
             }
             .onChange(of: state.isTopBandEnergyEffectEnabled) { _, isEnabled in
-                scheduleTopBandEnergyActivation(expanded: isExpanded && isEnabled)
+                scheduleTopBandEnergyActivation(expanded: isExpanded && isEnabled && !accessibilityReduceMotion)
             }
+            .onChange(of: accessibilityReduceMotion) { _, reduceMotion in
+                scheduleTopBandEnergyActivation(expanded: isExpanded && state.isTopBandEnergyEffectEnabled && !reduceMotion)
+                schedulePrimaryContentEntrance(expanded: isExpanded)
+            }
+            .onExitCommand {
+                setDataTimeRangeDrawerPresented(false)
+            }
+    }
+
+    @MainActor
+    private func setDataTimeRangeDrawerPresented(_ isPresented: Bool) {
+        let drawerAnimation: Animation
+        if accessibilityReduceMotion {
+            drawerAnimation = .easeOut(duration: animationProfile.reducedMotionFadeDuration)
+        } else {
+            drawerAnimation = .spring(
+                response: animationProfile.dataRangeDrawerResponse,
+                dampingFraction: animationProfile.dataRangeDrawerDampingFraction
+            )
+        }
+
+        withAnimation(drawerAnimation) {
+            isDataTimeRangeDrawerPresented = isPresented
+        }
     }
 
     private func scheduleTopBandEnergyActivation(expanded: Bool) {
@@ -449,6 +755,33 @@ struct IslandOverlayView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + topBandEnergyActivationDelay) {
             guard sequence == topBandEnergyActivationSequence, state.isExpanded else { return }
             isTopBandEnergyActive = true
+        }
+    }
+
+    private func schedulePrimaryContentEntrance(expanded: Bool) {
+        primaryContentEntranceSequence += 1
+        let sequence = primaryContentEntranceSequence
+
+        guard expanded else {
+            primaryContentExitDeadline = isPrimaryContentEntranceActive
+                ? Date().addingTimeInterval(primaryContentExitDuration)
+                : nil
+            withAnimation(primaryContentExitAnimation) {
+                isPrimaryContentEntranceActive = false
+            }
+            return
+        }
+
+        let shouldReverseExit = primaryContentExitDeadline.map { Date() < $0 } ?? false
+        primaryContentExitDeadline = nil
+        guard !isPrimaryContentEntranceActive else { return }
+
+        let entranceDelay = shouldReverseExit ? 0 : primaryContentEntranceDelay
+        DispatchQueue.main.asyncAfter(deadline: .now() + entranceDelay) {
+            guard sequence == primaryContentEntranceSequence, state.isExpanded else { return }
+            withAnimation(primaryContentEntranceAnimation) {
+                isPrimaryContentEntranceActive = true
+            }
         }
     }
 }
@@ -560,57 +893,71 @@ private struct CalibrationOverlayView: View {
 private struct PrimaryFeatureSwitcher: View {
     @Binding var selection: IslandPrimaryFeature
     let isExpanded: Bool
+    let hasManualCodexApproval: Bool
     let animationProfile: IslandAnimationProfile
 
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @Namespace private var selectionNamespace
 
-    private func featureEntranceAnimation(index: Int) -> Animation {
+    private var entranceAnimation: Animation {
+        if accessibilityReduceMotion {
+            return .easeOut(duration: animationProfile.reducedMotionFadeDuration)
+        }
         guard isExpanded else {
             return .easeOut(duration: animationProfile.attachedElementCollapseDuration)
         }
 
-        let baseAnimation = Animation.spring(
-            response: animationProfile.primaryFeatureEntranceResponse,
-            dampingFraction: animationProfile.primaryFeatureEntranceDampingFraction,
-            blendDuration: animationProfile.primaryFeatureEntranceBlendDuration
-        )
-
-        let staggerDelay = animationProfile.primaryFeatureEntranceStartDelay + (Double(index) * animationProfile.primaryFeatureStaggerDelay)
-        return baseAnimation.delay(staggerDelay)
+        return Animation.linear(duration: animationProfile.primaryFeatureEntranceDuration)
+            .delay(animationProfile.primaryFeatureEntranceStartDelay)
     }
 
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(Array(IslandPrimaryFeature.rightNavigationCases.enumerated()), id: \.element.id) { index, feature in
+            ForEach(IslandPrimaryFeature.rightNavigationCases) { feature in
                 Button {
                     selection = feature
                 } label: {
-                    Text(feature.title)
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, minHeight: 22)
-                        .background(
-                            ZStack {
-                                if selection == feature {
-                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .fill(.white.opacity(0.16))
-                                        .matchedGeometryEffect(id: "selection", in: selectionNamespace)
-                                } else {
-                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .fill(.white.opacity(0.05))
+                    ZStack(alignment: .topTrailing) {
+                        Text(feature.title)
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity, minHeight: 22)
+                            .background(
+                                ZStack {
+                                    if selection == feature {
+                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                            .fill(.white.opacity(0.16))
+                                            .matchedGeometryEffect(id: "selection", in: selectionNamespace)
+                                    } else {
+                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                            .fill(.white.opacity(0.05))
+                                    }
                                 }
+                            )
+
+                        if feature == .tasks, hasManualCodexApproval {
+                            Circle()
+                                .fill(Color(red: 1, green: 0.74, blue: 0.34))
+                                .frame(width: 5, height: 5)
+                                .offset(x: -3, y: 3)
+                                .accessibilityHidden(true)
                             }
-                        )
+                    }
                 }
-                .buttonStyle(PrimaryFeatureButtonStyle(animationProfile: animationProfile))
-                .offset(y: isExpanded ? 0 : -animationProfile.primaryFeatureButtonSlideDistance)
-                .opacity(isExpanded ? 1 : 0)
-                .animation(featureEntranceAnimation(index: index), value: isExpanded)
+                .buttonStyle(IslandPressButtonStyle())
+                .accessibilityLabel(
+                    feature == .tasks && hasManualCodexApproval
+                        ? "Tasks，有待审批请求"
+                        : feature.title
+                )
             }
         }
         .foregroundStyle(.white)
+        .offset(y: accessibilityReduceMotion || isExpanded ? 0 : -animationProfile.primaryFeatureButtonSlideDistance)
+        .opacity(isExpanded ? 1 : 0)
+        .animation(entranceAnimation, value: isExpanded)
         .animation(
-            .spring(
+            accessibilityReduceMotion ? nil : .spring(
                 response: animationProfile.primaryFeatureSelectionResponse,
                 dampingFraction: animationProfile.primaryFeatureSelectionDamping
             ),
@@ -623,7 +970,22 @@ private struct FilesPrimaryFeatureButton: View {
     let count: Int
     let isSelected: Bool
     let isExpanded: Bool
+    let animationProfile: IslandAnimationProfile
     let action: @MainActor () -> Void
+
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+
+    private var entranceAnimation: Animation {
+        if accessibilityReduceMotion {
+            return .easeOut(duration: animationProfile.reducedMotionFadeDuration)
+        }
+        guard isExpanded else {
+            return .easeOut(duration: animationProfile.attachedElementCollapseDuration)
+        }
+
+        return Animation.linear(duration: animationProfile.primaryFeatureEntranceDuration)
+            .delay(animationProfile.primaryFeatureEntranceStartDelay)
+    }
 
     var body: some View {
         Button(action: action) {
@@ -637,7 +999,7 @@ private struct FilesPrimaryFeatureButton: View {
                 }
                 .font(.system(size: 11, weight: .semibold))
                 .frame(width: 18, height: 18)
-                .animation(.easeInOut(duration: 0.18), value: isSelected)
+                .animation(accessibilityReduceMotion ? nil : .easeInOut(duration: 0.18), value: isSelected)
 
                 if count > 0 {
                     Text(badgeText)
@@ -664,10 +1026,11 @@ private struct FilesPrimaryFeatureButton: View {
                     )
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(IslandPressButtonStyle())
         .contentShape(Rectangle())
-        .offset(y: isExpanded ? 0 : -6)
+        .offset(y: accessibilityReduceMotion || isExpanded ? 0 : -animationProfile.primaryFeatureButtonSlideDistance)
         .opacity(isExpanded ? 1 : 0)
+        .animation(entranceAnimation, value: isExpanded)
         .accessibilityLabel("Files")
     }
 
@@ -685,15 +1048,5 @@ private struct MusicSkipGlyph: View {
             .symbolRenderingMode(.monochrome)
             .foregroundStyle(.white)
         .frame(width: 18, height: 18)
-    }
-}
-
-private struct PrimaryFeatureButtonStyle: ButtonStyle {
-    let animationProfile: IslandAnimationProfile
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? animationProfile.primaryFeatureButtonPressScale : 1.0)
-            .animation(.easeOut(duration: animationProfile.primaryFeatureButtonPressDuration), value: configuration.isPressed)
     }
 }

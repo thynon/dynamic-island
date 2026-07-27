@@ -13,6 +13,14 @@ final class CodexStatusSignalSource: @unchecked Sendable {
         let threadTitle: String?
         let tokensUsed: Int
         let rolloutPath: String?
+        let parentThreadID: String?
+        let rootThreadID: String?
+        let agentNickname: String?
+        let agentDepth: Int
+
+        var isSubagent: Bool {
+            parentThreadID != nil
+        }
     }
 
     private struct RolloutState {
@@ -26,6 +34,8 @@ final class CodexStatusSignalSource: @unchecked Sendable {
         var lifecycle: RolloutLifecycle = .unknown
         var lastEventAt: TimeInterval?
         var turnID: String?
+        var progressEvents: [CodexSessionProgressEvent] = []
+        var progressEventSequence = 0
 
         var isRunning: Bool {
             switch lifecycle {
@@ -65,6 +75,7 @@ final class CodexStatusSignalSource: @unchecked Sendable {
     private let globalStateRefreshInterval: TimeInterval = 1
     private let completedTaskRetentionDuration: TimeInterval = 10
     private let staleTaskTimeoutDuration: TimeInterval = 60
+    private let progressEventLimit = 12
     private var cachedThreadRecords: [ThreadRecord] = []
     private var cachedThreadRefreshDate: Date?
     private var cachedGlobalApprovalStates: [String: CodexTaskStatus.ApprovalState] = [:]
@@ -83,7 +94,7 @@ final class CodexStatusSignalSource: @unchecked Sendable {
 
     func currentSnapshot(now: Date = Date()) -> CodexStatusBarSnapshot {
         let threads = readLatestThreadRecordsIfNeeded(now: now)
-        guard let thread = threads.first else {
+        guard !threads.isEmpty else {
             return .unavailable
         }
 
@@ -94,13 +105,17 @@ final class CodexStatusSignalSource: @unchecked Sendable {
         let tasks = threads.compactMap {
             taskStatus(for: $0, now: now, globalApprovalState: globalApprovalStates[$0.id])
         }
-        let primaryTask = tasks.first
+        let primaryTask = tasks.first(where: { !$0.isSubagent }) ?? tasks.first
+        let primaryThreadID = primaryTask?.rootThreadID ?? primaryTask?.id
+        let primaryThread = primaryThreadID.flatMap { id in
+            threads.first(where: { $0.id == id })
+        } ?? threads.first(where: { !$0.isSubagent }) ?? threads[0]
 
         return CodexStatusBarSnapshot(
-            threadID: thread.id,
-            threadTitle: thread.threadTitle,
+            threadID: primaryThread.id,
+            threadTitle: primaryThread.threadTitle,
             elapsedSeconds: primaryTask?.elapsedSeconds ?? 0,
-            totalTokens: primaryTask?.totalTokens ?? thread.tokensUsed,
+            totalTokens: primaryTask?.totalTokens ?? primaryThread.tokensUsed,
             runningTasksCount: tasks.filter(\.activityState.isWorking).count,
             activityState: primaryTask?.activityState ?? .idle,
             tasks: tasks
@@ -131,7 +146,72 @@ final class CodexStatusSignalSource: @unchecked Sendable {
     private func readLatestThreadRecords() -> [ThreadRecord] {
         guard fileManager.fileExists(atPath: codexStateDatabaseURL.path) else { return [] }
         let query = """
-        SELECT id, title, tokens_used, rollout_path FROM threads WHERE archived=0 ORDER BY updated_at_ms DESC LIMIT 4;
+        WITH RECURSIVE
+        root_threads AS (
+            SELECT
+                id,
+                title,
+                tokens_used,
+                rollout_path,
+                updated_at_ms,
+                NULL AS parent_thread_id,
+                id AS root_thread_id,
+                NULL AS agent_nickname,
+                0 AS agent_depth,
+                0 AS is_subagent
+            FROM threads
+            WHERE archived = 0
+              AND COALESCE(thread_source, 'user') <> 'subagent'
+            ORDER BY updated_at_ms DESC
+            LIMIT 8
+        ),
+        agent_tree AS (
+            SELECT
+                thread.id,
+                thread.title,
+                thread.tokens_used,
+                thread.rollout_path,
+                thread.updated_at_ms,
+                json_extract(thread.source, '$.subagent.thread_spawn.parent_thread_id') AS parent_thread_id,
+                root.id AS root_thread_id,
+                thread.agent_nickname,
+                COALESCE(json_extract(thread.source, '$.subagent.thread_spawn.depth'), 1) AS agent_depth,
+                1 AS is_subagent
+            FROM threads AS thread
+            JOIN root_threads AS root
+              ON json_extract(thread.source, '$.subagent.thread_spawn.parent_thread_id') = root.id
+            WHERE thread.archived = 0
+              AND thread.thread_source = 'subagent'
+
+            UNION ALL
+
+            SELECT
+                thread.id,
+                thread.title,
+                thread.tokens_used,
+                thread.rollout_path,
+                thread.updated_at_ms,
+                json_extract(thread.source, '$.subagent.thread_spawn.parent_thread_id') AS parent_thread_id,
+                parent.root_thread_id,
+                thread.agent_nickname,
+                COALESCE(json_extract(thread.source, '$.subagent.thread_spawn.depth'), parent.agent_depth + 1) AS agent_depth,
+                1 AS is_subagent
+            FROM threads AS thread
+            JOIN agent_tree AS parent
+              ON json_extract(thread.source, '$.subagent.thread_spawn.parent_thread_id') = parent.id
+            WHERE thread.archived = 0
+              AND thread.thread_source = 'subagent'
+        ),
+        selected_agents AS (
+            SELECT *
+            FROM agent_tree
+            ORDER BY updated_at_ms DESC
+            LIMIT 24
+        )
+        SELECT * FROM root_threads
+        UNION ALL
+        SELECT * FROM selected_agents
+        ORDER BY is_subagent ASC, updated_at_ms DESC;
         """
         guard let output = runSQLiteQuery(query),
               let data = output.data(using: .utf8),
@@ -146,7 +226,11 @@ final class CodexStatusSignalSource: @unchecked Sendable {
                 id: id,
                 threadTitle: row["title"] as? String,
                 tokensUsed: intValue(row["tokens_used"]) ?? 0,
-                rolloutPath: row["rollout_path"] as? String
+                rolloutPath: row["rollout_path"] as? String,
+                parentThreadID: row["parent_thread_id"] as? String,
+                rootThreadID: row["root_thread_id"] as? String,
+                agentNickname: row["agent_nickname"] as? String,
+                agentDepth: intValue(row["agent_depth"]) ?? 0
             )
         }
     }
@@ -195,8 +279,13 @@ final class CodexStatusSignalSource: @unchecked Sendable {
                 approvalState: approvalState
             ),
             approvalState: approvalState,
+            parentThreadID: thread.parentThreadID,
+            rootThreadID: thread.rootThreadID,
+            agentNickname: thread.agentNickname,
+            agentDepth: thread.agentDepth,
             turnID: rolloutState?.turnID,
-            completedAt: rolloutState?.completedAt
+            completedAt: rolloutState?.completedAt,
+            progressEvents: rolloutState?.progressEvents ?? []
         )
     }
 
@@ -310,7 +399,7 @@ final class CodexStatusSignalSource: @unchecked Sendable {
             if event["type"] as? String == "event_msg" {
                 applyEventMessagePayload(payload, event: event, to: &state)
             } else if event["type"] as? String == "response_item" {
-                applyResponseItemPayload(payload, to: &state)
+                applyResponseItemPayload(payload, event: event, to: &state)
             }
         }
         return state
@@ -323,9 +412,12 @@ final class CodexStatusSignalSource: @unchecked Sendable {
     ) {
         switch payload["type"] as? String {
         case "task_started":
+            state.progressEvents.removeAll(keepingCapacity: true)
+            state.progressEventSequence = 0
             state.startedAt = doubleValue(payload["started_at"])
             state.lifecycle = .running
             state.activityState = .thinking
+            appendProgressEvent(kind: .started, occurredAt: eventTimestamp(event), to: &state)
         case "task_complete":
             completeTurn(payload: payload, event: event, state: &state)
         case "token_count":
@@ -342,12 +434,21 @@ final class CodexStatusSignalSource: @unchecked Sendable {
                 state.lifecycle = .running
             }
             state.activityState = .writing
+            appendProgressEvent(kind: .responding, occurredAt: eventTimestamp(event), to: &state)
+        case "agent_reasoning":
+            state.hasRecentActivity = true
+            if state.lifecycle != .terminal {
+                state.lifecycle = .running
+            }
+            state.activityState = .thinking
+            appendProgressEvent(kind: .thinking, occurredAt: eventTimestamp(event), to: &state)
         case "error":
             state.hasRecentActivity = true
             if state.lifecycle != .terminal {
                 state.lifecycle = .running
             }
             state.activityState = .retrying
+            appendProgressEvent(kind: .retrying, occurredAt: eventTimestamp(event), to: &state)
         case "turn_aborted":
             completeTurn(payload: payload, event: event, state: &state)
         case "turn_failed", "turn_cancelled":
@@ -355,17 +456,21 @@ final class CodexStatusSignalSource: @unchecked Sendable {
         case "exec_approval_request", "command_execution_request_approval":
             state.approvalState = .pendingCommand
             state.activityState = .waitingApproval
+            appendProgressEvent(kind: .waitingApproval, occurredAt: eventTimestamp(event), to: &state)
         case "apply_patch_approval_request", "patch_approval_request", "file_change_request_approval":
             state.approvalState = .pendingFileChange
             state.activityState = .waitingApproval
+            appendProgressEvent(kind: .waitingApproval, occurredAt: eventTimestamp(event), to: &state)
         case "request_permissions", "permissions_request_approval":
             state.approvalState = .pendingPermissions
             state.activityState = .waitingApproval
+            appendProgressEvent(kind: .waitingApproval, occurredAt: eventTimestamp(event), to: &state)
         default:
             if let message = payload["message"] as? String,
                message.localizedCaseInsensitiveContains("compacting")
             {
                 state.activityState = .compacting
+                appendProgressEvent(kind: .compacting, occurredAt: eventTimestamp(event), to: &state)
             }
         }
     }
@@ -380,12 +485,15 @@ final class CodexStatusSignalSource: @unchecked Sendable {
         case "item/commandExecution/requestApproval":
             state.approvalState = .pendingCommand
             state.activityState = .waitingApproval
+            appendProgressEvent(kind: .waitingApproval, occurredAt: eventTimestamp(event), to: &state)
         case "item/fileChange/requestApproval":
             state.approvalState = .pendingFileChange
             state.activityState = .waitingApproval
+            appendProgressEvent(kind: .waitingApproval, occurredAt: eventTimestamp(event), to: &state)
         case "item/permissions/requestApproval":
             state.approvalState = .pendingPermissions
             state.activityState = .waitingApproval
+            appendProgressEvent(kind: .waitingApproval, occurredAt: eventTimestamp(event), to: &state)
         case "item/autoApprovalReview/started":
             if state.approvalState == .none {
                 state.approvalState = .autoReviewing
@@ -403,15 +511,44 @@ final class CodexStatusSignalSource: @unchecked Sendable {
         }
     }
 
-    private func applyResponseItemPayload(_ payload: [String: Any], to state: inout RolloutState) {
+    private func applyResponseItemPayload(
+        _ payload: [String: Any],
+        event: [String: Any],
+        to state: inout RolloutState
+    ) {
         state.hasRecentActivity = true
         if state.lifecycle != .terminal {
             state.lifecycle = .running
         }
-        if payload["name"] != nil || payload["arguments"] != nil {
+
+        switch stringValue(payload["type"]) {
+        case "reasoning":
+            state.activityState = .thinking
+            appendProgressEvent(kind: .thinking, occurredAt: eventTimestamp(event), to: &state)
+        case "custom_tool_call", "function_call":
             state.activityState = .runningTool
-        } else if payload["phase"] != nil || payload["role"] as? String == "assistant" {
+            appendProgressEvent(
+                kind: .tool,
+                occurredAt: eventTimestamp(event),
+                displayText: sanitizedToolProgressText(stringValue(payload["name"])),
+                to: &state
+            )
+        case "message":
             state.activityState = .writing
+            appendProgressEvent(kind: .responding, occurredAt: eventTimestamp(event), to: &state)
+        default:
+            if payload["name"] != nil || payload["arguments"] != nil {
+                state.activityState = .runningTool
+                appendProgressEvent(
+                    kind: .tool,
+                    occurredAt: eventTimestamp(event),
+                    displayText: sanitizedToolProgressText(stringValue(payload["name"])),
+                    to: &state
+                )
+            } else if payload["phase"] != nil || payload["role"] as? String == "assistant" {
+                state.activityState = .writing
+                appendProgressEvent(kind: .responding, occurredAt: eventTimestamp(event), to: &state)
+            }
         }
     }
 
@@ -432,6 +569,75 @@ final class CodexStatusSignalSource: @unchecked Sendable {
         state.lifecycle = .terminal
         state.activityState = .idle
         state.approvalState = .none
+        appendProgressEvent(
+            kind: .completed,
+            occurredAt: completedAt,
+            displayText: completionProgressText(payload: payload, event: event),
+            to: &state
+        )
+    }
+
+    private func appendProgressEvent(
+        kind: CodexSessionProgressEvent.Kind,
+        occurredAt: TimeInterval?,
+        displayText: String? = nil,
+        to state: inout RolloutState
+    ) {
+        let event = CodexSessionProgressEvent(
+            id: "\(kind.rawValue)-\(Int((occurredAt ?? 0) * 1000))-\(state.progressEventSequence)",
+            kind: kind,
+            occurredAt: occurredAt,
+            displayText: displayText
+        )
+        guard state.progressEvents.last?.kind != event.kind
+            || state.progressEvents.last?.displayText != event.displayText
+        else {
+            return
+        }
+
+        state.progressEventSequence += 1
+        state.progressEvents.append(event)
+        if state.progressEvents.count > progressEventLimit {
+            state.progressEvents.removeFirst(state.progressEvents.count - progressEventLimit)
+        }
+    }
+
+    private func sanitizedToolProgressText(_ name: String?) -> String {
+        let normalizedName = name?.lowercased() ?? ""
+        if normalizedName.contains("apply_patch") {
+            return "修改文件"
+        }
+        if normalizedName.contains("view_image") {
+            return "查看图像"
+        }
+        if normalizedName.contains("imagegen") || normalizedName.contains("image_gen") {
+            return "生成图像"
+        }
+        if normalizedName == "wait" || normalizedName.hasSuffix("__wait") {
+            return "等待工具"
+        }
+        if normalizedName.contains("exec") {
+            return "运行命令"
+        }
+        return "运行工具"
+    }
+
+    private func completionProgressText(
+        payload: [String: Any],
+        event: [String: Any]
+    ) -> String {
+        let terminalType = stringValue(payload["type"])
+            ?? stringValue(event["method"])
+            ?? ""
+        if terminalType.localizedCaseInsensitiveContains("aborted")
+            || terminalType.localizedCaseInsensitiveContains("cancelled")
+        {
+            return "会话已中止"
+        }
+        if terminalType.localizedCaseInsensitiveContains("failed") {
+            return "会话失败"
+        }
+        return "完成本轮会话"
     }
 
     private func eventTimestamp(_ event: [String: Any]) -> TimeInterval? {

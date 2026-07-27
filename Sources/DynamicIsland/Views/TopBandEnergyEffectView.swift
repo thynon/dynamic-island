@@ -14,9 +14,21 @@ struct TopBandEnergyEffectView: NSViewRepresentable {
     }
 }
 
+enum TopBandEnergyEffectResources {
+    static let didPrepareNotification = Notification.Name("TopBandEnergyEffectResourcesDidPrepare")
+
+    static func prewarm() {
+        DispatchQueue.global(qos: .utility).async {
+            guard let device = MTLCreateSystemDefaultDevice() else { return }
+            TopBandEnergyPipelineCache.shared.prepareResources(for: device)
+        }
+    }
+}
+
 final class TopBandEnergyEffectNSView: NSView {
     private let trackHostView = NSView()
     private let baseGradientLayer = CAGradientLayer()
+    private var metalDevice: MTLDevice?
     private var metalView: MTKView?
     private var renderer: TopBandEnergyRenderer?
     private var renderTimer: Timer?
@@ -24,6 +36,12 @@ final class TopBandEnergyEffectNSView: NSView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(pipelineResourcesDidPrepare(_:)),
+            name: TopBandEnergyEffectResources.didPrepareNotification,
+            object: nil
+        )
         configure()
     }
 
@@ -42,12 +60,11 @@ final class TopBandEnergyEffectNSView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard didStart else { return }
-        if window == nil {
-            stopRenderTimer()
-        } else {
-            startRenderTimer()
+        stopObservingWindowVisibility()
+        if let window {
+            observeWindowVisibility(window)
         }
+        syncRenderTimerWithWindowVisibility()
     }
 
     override func layout() {
@@ -67,7 +84,7 @@ final class TopBandEnergyEffectNSView: NSView {
             didStart = true
             renderer?.start()
         }
-        startRenderTimer()
+        syncRenderTimerWithWindowVisibility()
     }
 
     private func configure() {
@@ -91,6 +108,21 @@ final class TopBandEnergyEffectNSView: NSView {
         trackHostView.layer?.addSublayer(baseGradientLayer)
 
         guard let device = MTLCreateSystemDefaultDevice() else { return }
+        metalDevice = device
+        configureMetalRendererIfReady()
+        if metalView == nil {
+            TopBandEnergyEffectResources.prewarm()
+        }
+    }
+
+    private func configureMetalRendererIfReady() {
+        guard
+            metalView == nil,
+            let device = metalDevice,
+            let renderer = TopBandEnergyRenderer(device: device)
+        else {
+            return
+        }
 
         let metalView = MTKView(frame: .zero, device: device)
         metalView.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
@@ -106,15 +138,29 @@ final class TopBandEnergyEffectNSView: NSView {
         metalView.layer?.masksToBounds = true
         (metalView.layer as? CAMetalLayer)?.isOpaque = false
 
-        guard let renderer = TopBandEnergyRenderer(device: device) else { return }
         metalView.delegate = renderer
         trackHostView.addSubview(metalView)
         self.renderer = renderer
         self.metalView = metalView
+
+        NotificationCenter.default.removeObserver(
+            self,
+            name: TopBandEnergyEffectResources.didPrepareNotification,
+            object: nil
+        )
+        if didStart {
+            renderer.start()
+            syncRenderTimerWithWindowVisibility()
+        }
+    }
+
+    private var isWindowRenderable: Bool {
+        guard window?.isVisible == true, let window else { return false }
+        return window.occlusionState.contains(.visible)
     }
 
     private func startRenderTimer() {
-        guard renderTimer == nil, window != nil else { return }
+        guard renderTimer == nil, isWindowRenderable, metalView != nil else { return }
         metalView?.draw()
         let timer = Timer(timeInterval: 1.0 / 12.0, target: self, selector: #selector(renderFrame(_:)), userInfo: nil, repeats: true)
         RunLoop.main.add(timer, forMode: .common)
@@ -122,6 +168,10 @@ final class TopBandEnergyEffectNSView: NSView {
     }
 
     @objc private func renderFrame(_ timer: Timer) {
+        guard isWindowRenderable else {
+            stopRenderTimer()
+            return
+        }
         metalView?.draw()
     }
 
@@ -129,13 +179,123 @@ final class TopBandEnergyEffectNSView: NSView {
         renderTimer?.invalidate()
         renderTimer = nil
     }
+
+    private func observeWindowVisibility(_ window: NSWindow) {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowVisibilityDidChange(_:)),
+            name: NSWindow.didChangeOcclusionStateNotification,
+            object: window
+        )
+    }
+
+    private func stopObservingWindowVisibility() {
+        NotificationCenter.default.removeObserver(
+            self,
+            name: NSWindow.didChangeOcclusionStateNotification,
+            object: nil
+        )
+    }
+
+    @objc private func windowVisibilityDidChange(_ notification: Notification) {
+        syncRenderTimerWithWindowVisibility()
+    }
+
+    @objc private func pipelineResourcesDidPrepare(_ notification: Notification) {
+        configureMetalRendererIfReady()
+    }
+
+    private func syncRenderTimerWithWindowVisibility() {
+        guard didStart, isWindowRenderable else {
+            stopRenderTimer()
+            return
+        }
+        startRenderTimer()
+    }
+}
+
+private struct TopBandEnergyPipelineResources {
+    let pipelineState: MTLRenderPipelineState
+    let vertexBuffer: MTLBuffer
+}
+
+private final class TopBandEnergyPipelineCache: @unchecked Sendable {
+    static let shared = TopBandEnergyPipelineCache()
+
+    private let lock = NSLock()
+    private var resourcesByDevice: [UInt64: TopBandEnergyPipelineResources] = [:]
+    private var preparingDeviceIDs: Set<UInt64> = []
+
+    func prepareResources(for device: MTLDevice) {
+        let deviceID = device.registryID
+        lock.lock()
+        guard resourcesByDevice[deviceID] == nil, !preparingDeviceIDs.contains(deviceID) else {
+            lock.unlock()
+            return
+        }
+        preparingDeviceIDs.insert(deviceID)
+        lock.unlock()
+
+        let resources = Self.makeResources(for: device)
+
+        lock.lock()
+        preparingDeviceIDs.remove(deviceID)
+        if let resources {
+            resourcesByDevice[deviceID] = resources
+        }
+        lock.unlock()
+
+        guard resources != nil else { return }
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: TopBandEnergyEffectResources.didPrepareNotification,
+                object: nil
+            )
+        }
+    }
+
+    func readyResources(for device: MTLDevice) -> TopBandEnergyPipelineResources? {
+        lock.lock()
+        defer { lock.unlock() }
+        return resourcesByDevice[device.registryID]
+    }
+
+    private static func makeResources(for device: MTLDevice) -> TopBandEnergyPipelineResources? {
+        guard
+            let library = try? device.makeLibrary(source: TopBandEnergyRenderer.metalSource, options: nil),
+            let vertexFunction = library.makeFunction(name: "energy_vertex"),
+            let fragmentFunction = library.makeFunction(name: "energy_fragment")
+        else {
+            return nil
+        }
+
+        let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.vertexFunction = vertexFunction
+        descriptor.fragmentFunction = fragmentFunction
+        descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+
+        guard
+            let pipelineState = try? device.makeRenderPipelineState(descriptor: descriptor),
+            let vertexBuffer = device.makeBuffer(
+                bytes: [-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1] as [Float],
+                length: MemoryLayout<Float>.stride * 12
+            )
+        else {
+            return nil
+        }
+
+        let resources = TopBandEnergyPipelineResources(
+            pipelineState: pipelineState,
+            vertexBuffer: vertexBuffer
+        )
+        return resources
+    }
 }
 
 private final class TopBandEnergyRenderer: NSObject, MTKViewDelegate {
     private static let maxBursts = 8
     private static let uniformCount = 80
 
-    private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let pipelineState: MTLRenderPipelineState
     private let vertexBuffer: MTLBuffer
@@ -160,34 +320,16 @@ private final class TopBandEnergyRenderer: NSObject, MTKViewDelegate {
     private var seed: Float = Float.random(in: 0..<512)
 
     init?(device: MTLDevice) {
-        self.device = device
         guard
             let commandQueue = device.makeCommandQueue(),
-            let library = try? device.makeLibrary(source: Self.metalSource, options: nil),
-            let vertexFunction = library.makeFunction(name: "energy_vertex"),
-            let fragmentFunction = library.makeFunction(name: "energy_fragment")
-        else {
-            return nil
-        }
-
-        let descriptor = MTLRenderPipelineDescriptor()
-        descriptor.vertexFunction = vertexFunction
-        descriptor.fragmentFunction = fragmentFunction
-        descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
-
-        guard
-            let pipelineState = try? device.makeRenderPipelineState(descriptor: descriptor),
-            let vertexBuffer = device.makeBuffer(
-                bytes: [-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1] as [Float],
-                length: MemoryLayout<Float>.stride * 12
-            )
+            let resources = TopBandEnergyPipelineCache.shared.readyResources(for: device)
         else {
             return nil
         }
 
         self.commandQueue = commandQueue
-        self.pipelineState = pipelineState
-        self.vertexBuffer = vertexBuffer
+        self.pipelineState = resources.pipelineState
+        self.vertexBuffer = resources.vertexBuffer
         super.init()
         updateThemeUniforms()
     }
@@ -332,7 +474,7 @@ private final class TopBandEnergyRenderer: NSObject, MTKViewDelegate {
         uniforms[offset + 3] = value.w
     }
 
-    private static let metalSource = #"""
+    fileprivate static let metalSource = #"""
     #include <metal_stdlib>
     using namespace metal;
 

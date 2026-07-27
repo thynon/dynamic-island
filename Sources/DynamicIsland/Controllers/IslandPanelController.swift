@@ -26,11 +26,13 @@ final class IslandPanelController {
     private static let debugCalibrationEnvironmentKey = "ISLAND_DEBUG_CALIBRATION"
     private static let debugPrimaryFeatureFrameCaptureDirectoryEnvironmentKey = "ISLAND_DEBUG_PRIMARY_FEATURE_FRAME_CAPTURE_DIR"
     private static let codexReasoningFallbackRefreshInterval: TimeInterval = 2
-    private static let codexStatusBackgroundRefreshInterval: TimeInterval = 5
+    private static let codexStatusBackgroundRefreshInterval: TimeInterval = 1
 
     private var metrics: NotchMetrics
     private var isExpanded = false
     private var collapseWorkItem: DispatchWorkItem?
+    nonisolated(unsafe) private var tasksCanvasResizeWorkItem: DispatchWorkItem?
+    nonisolated(unsafe) private var approvalAttachmentResizeWorkItem: DispatchWorkItem?
     nonisolated(unsafe) private var trackInfoDismissWorkItem: DispatchWorkItem?
     nonisolated(unsafe) private var musicSkipFeedbackWorkItem: DispatchWorkItem?
     nonisolated(unsafe) private var gestureResetWorkItem: DispatchWorkItem?
@@ -52,15 +54,22 @@ final class IslandPanelController {
     private let animationProfile = IslandAnimationProfile.default
     private let runtimeSettings: IslandRuntimeSettings
     private let musicPlaybackDataSource: any MusicPlaybackDataSource
+    private let usageSnapshotLoader: any UsageSnapshotLoading
     private let temporaryFileShelfStore = TemporaryFileShelfStore()
     private let interactionLogger = IslandInteractionLogger()
     private let codexTaskDismissalStore = CodexTaskDismissalStore()
+    private let codexApprovalCoordinator: CodexApprovalCoordinator?
+    private var codexApprovalApplicationOpenState = CodexApprovalApplicationOpenState()
+    private var loggedCodexApprovalPresentedRequestIDs: Set<CodexApprovalRequest.ID> = []
     private var temporaryFileShelfSelection = TemporaryFileShelfSelection()
     private var lastNonFilesPrimaryFeature: IslandPrimaryFeature = .tasks
+    private var lastObservedPassiveApprovalKeys: Set<String> = []
     private var musicPlaybackPollingTask: Task<Void, Never>?
     private var debugMusicSignalTask: Task<Void, Never>?
     private var codexReasoningEffortPollingTask: Task<Void, Never>?
     private var codexStatusPollingTask: Task<Void, Never>?
+    private var dataUsageRefreshTask: Task<Void, Never>?
+    private var dataUsageRefreshGeneration = 0
     private var musicSkipTask: Task<Void, Never>?
     private var temporaryFileShelfPruningTask: Task<Void, Never>?
     private var didStartDebugPrimaryFeatureFrameCapture = false
@@ -69,15 +78,21 @@ final class IslandPanelController {
     private var airDropUndoFileURLs: [URL] = []
     private var airDropUndoClearWorkItem: DispatchWorkItem?
     nonisolated(unsafe) private var runtimeSettingsCancellable: AnyCancellable?
+    nonisolated(unsafe) private var pointerPassthroughMonitor: Any?
+    private var pointerPassthroughSyncSource: DispatchSourceUserDataAdd?
     nonisolated(unsafe) private var hiddenScrollMonitor: Any?
 
     init(
         screen: NSScreen? = NSScreen.main,
         runtimeSettings: IslandRuntimeSettings = IslandRuntimeSettings(),
-        musicPlaybackDataSource: any MusicPlaybackDataSource = ScriptableMusicPlaybackDataSource()
+        musicPlaybackDataSource: any MusicPlaybackDataSource = ScriptableMusicPlaybackDataSource(),
+        usageSnapshotLoader: any UsageSnapshotLoading = UsageAggregationService.live(),
+        codexApprovalCoordinator: CodexApprovalCoordinator? = nil
     ) {
         self.runtimeSettings = runtimeSettings
         self.musicPlaybackDataSource = musicPlaybackDataSource
+        self.usageSnapshotLoader = usageSnapshotLoader
+        self.codexApprovalCoordinator = codexApprovalCoordinator
         runtimeSettings.isCalibrationModeEnabled = Self.shouldShowCalibrationOverlay
         let screenMetrics = ScreenMetricsProvider.metrics(for: screen)
         metrics = screenMetrics
@@ -98,7 +113,20 @@ final class IslandPanelController {
         hostingView = IslandTrackingHostingView(
             rootView: IslandOverlayView(metrics: screenMetrics, state: overlayState)
         )
+        codexApprovalCoordinator?.onPresentationChange = { [weak self] presentation in
+            self?.updateManagedCodexApprovalPresentation(presentation)
+        }
+        codexApprovalCoordinator?.onAuditEvent = { [weak self] event in
+            self?.logCodexApprovalAuditEvent(event)
+        }
+        codexApprovalCoordinator?.onNewRequest = { [weak self] request in
+            self?.handleManagedCodexApprovalRequest(request)
+        }
+        if let codexApprovalCoordinator {
+            updateManagedCodexApprovalPresentation(codexApprovalCoordinator.presentation)
+        }
 
+        TopBandEnergyEffectResources.prewarm()
         configurePanel()
         installHostingView()
         installTrackingCallbacks()
@@ -167,12 +195,19 @@ final class IslandPanelController {
         debugMusicSignalTask?.cancel()
         codexReasoningEffortPollingTask?.cancel()
         codexStatusPollingTask?.cancel()
+        dataUsageRefreshTask?.cancel()
         musicSkipTask?.cancel()
         temporaryFileShelfPruningTask?.cancel()
         runtimeSettingsCancellable?.cancel()
         trackInfoDismissWorkItem?.cancel()
         musicSkipFeedbackWorkItem?.cancel()
         gestureResetWorkItem?.cancel()
+        tasksCanvasResizeWorkItem?.cancel()
+        approvalAttachmentResizeWorkItem?.cancel()
+        if let pointerPassthroughMonitor {
+            NSEvent.removeMonitor(pointerPassthroughMonitor)
+        }
+        pointerPassthroughSyncSource?.cancel()
         if let hiddenScrollMonitor {
             NSEvent.removeMonitor(hiddenScrollMonitor)
         }
@@ -181,11 +216,13 @@ final class IslandPanelController {
     func show() {
         refreshForCurrentScreen()
         panel.orderFrontRegardless()
+        syncHoverWithPointer()
         interactionLogger.log("panel.show")
         startDebugPrimaryFeatureFrameCaptureIfNeeded()
     }
 
     func hide() {
+        removePointerPassthroughMonitor()
         panel.orderOut(nil)
         interactionLogger.log("panel.hide")
     }
@@ -199,16 +236,25 @@ final class IslandPanelController {
             interactionLogger.log("display.metrics.changed", metadata: Self.displayLogMetadata(for: screen, metrics: metrics))
         }
         updateRootView()
-        setPanelFrame(
-            Self.windowFrame(
+        if overlayState.usesOpenCanvas {
+            setPanelFrame(
+                expandedPanelFrame(
+                    shellHeight: expandedTasksShellHeight,
+                    on: screen
+                )
+            )
+        } else {
+            setPanelFrame(
+                Self.windowFrame(
                 for: Self.windowSize(
                     for: metrics,
-                    usesOpenCanvas: overlayState.usesOpenCanvas,
+                    usesOpenCanvas: false,
                     showsTrackInfo: overlayState.isTrackInfoPresented
                 ),
                 on: screen
             )
-        )
+            )
+        }
     }
 
     func resetDisplayAdaptation() {
@@ -233,8 +279,8 @@ final class IslandPanelController {
             scrollSuppressionUntil = Date().addingTimeInterval(Self.scrollSuppressionAfterExpansionDuration)
             overlayState.usesOpenCanvas = true
             setPanelFrame(
-                Self.windowFrame(
-                    for: Self.windowSize(for: metrics, usesOpenCanvas: true),
+                expandedPanelFrame(
+                    shellHeight: expandedTasksShellHeight,
                     on: panel.screen ?? NSScreen.main
                 )
             )
@@ -245,7 +291,12 @@ final class IslandPanelController {
                     self.overlayState.isExpanded = true
                 }
             }
+            presentCodexApprovalAttachmentIfNeeded()
         } else {
+            dismissCodexApprovalAttachment(shrinkPanel: false)
+            setCodexTasksDetailExpansionHeight(0)
+            tasksCanvasResizeWorkItem?.cancel()
+            tasksCanvasResizeWorkItem = nil
             scrollSuppressionUntil = nil
             withAnimation(collapseAnimation) {
                 overlayState.isExpanded = false
@@ -262,24 +313,137 @@ final class IslandPanelController {
                 )
             }
             collapseWorkItem = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + animationProfile.collapseCanvasDelay, execute: workItem)
+            let canvasDelay = prefersReducedMotion
+                ? animationProfile.reducedMotionFadeDuration
+                : animationProfile.collapseCanvasDelay
+            DispatchQueue.main.asyncAfter(deadline: .now() + canvasDelay, execute: workItem)
         }
     }
 
-    private var expandAnimation: Animation {
-        .interactiveSpring(
+    private var prefersReducedMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
+    private var expandAnimation: Animation? {
+        prefersReducedMotion ? nil : .interactiveSpring(
             response: animationProfile.expandResponse,
             dampingFraction: animationProfile.expandDampingFraction,
             blendDuration: animationProfile.expandBlendDuration
         )
     }
 
-    private var collapseAnimation: Animation {
-        .easeOut(duration: animationProfile.collapseDuration)
+    private var collapseAnimation: Animation? {
+        prefersReducedMotion ? nil : .easeOut(duration: animationProfile.collapseDuration)
+    }
+
+    private var tasksHeightAnimation: Animation? {
+        prefersReducedMotion ? nil : .spring(
+            response: animationProfile.primaryFeatureSelectionResponse,
+            dampingFraction: animationProfile.primaryFeatureSelectionDamping,
+            blendDuration: 0
+        )
+    }
+
+    private var approvalAttachmentPresentationAnimation: Animation? {
+        prefersReducedMotion
+            ? .easeOut(duration: animationProfile.reducedMotionFadeDuration)
+            : .spring(
+                response: animationProfile.primaryFeatureSelectionResponse,
+                dampingFraction: animationProfile.primaryFeatureSelectionDamping,
+                blendDuration: 0
+            )
+    }
+
+    private var approvalAttachmentDismissAnimation: Animation? {
+        .easeOut(
+            duration: prefersReducedMotion
+                ? animationProfile.reducedMotionFadeDuration
+                : animationProfile.attachedElementCollapseDuration
+        )
+    }
+
+    private var expandedTasksShellHeight: CGFloat {
+        metrics.openHeight + overlayState.codexTasksDetailExpansionHeight
+    }
+
+    private var currentApprovalAdditionalRightWidth: CGFloat {
+        guard overlayState.isCodexApprovalAttachmentPresented else { return 0 }
+        return CodexTasksApprovalLayout(
+            metrics: metrics,
+            shellHeight: expandedTasksShellHeight
+        ).additionalCanvasWidth
+    }
+
+    private func expandedPanelFrame(
+        shellHeight: CGFloat,
+        additionalRightWidth: CGFloat? = nil,
+        on screen: NSScreen?
+    ) -> NSRect? {
+        Self.expandedWindowFrame(
+            metrics: metrics,
+            shellHeight: shellHeight,
+            additionalRightWidth: additionalRightWidth ?? currentApprovalAdditionalRightWidth,
+            on: screen
+        )
+    }
+
+    private func setCodexTasksDetailExpansionHeight(_ requestedHeight: CGFloat) {
+        let maximumHeight = CodexTasksAdaptiveLayout.maximumExtraHeight
+        let clampedHeight = min(max(0, requestedHeight), maximumHeight)
+        let targetHeight = isExpanded && overlayState.selectedPrimaryFeature == .tasks
+            ? clampedHeight
+            : 0
+        let currentHeight = overlayState.codexTasksDetailExpansionHeight
+        guard currentHeight != targetHeight else { return }
+
+        tasksCanvasResizeWorkItem?.cancel()
+        tasksCanvasResizeWorkItem = nil
+        let targetShellHeight = metrics.openHeight + targetHeight
+
+        if targetHeight > currentHeight {
+            setPanelFrame(
+                expandedPanelFrame(
+                    shellHeight: targetShellHeight,
+                    on: panel.screen ?? NSScreen.main
+                )
+            )
+        }
+
+        withAnimation(tasksHeightAnimation) {
+            overlayState.codexTasksDetailExpansionHeight = targetHeight
+        }
+
+        guard targetHeight < currentHeight else { return }
+        let resize = { [weak self] in
+            guard let self,
+                  self.isExpanded,
+                  self.overlayState.codexTasksDetailExpansionHeight == targetHeight
+            else { return }
+            self.setPanelFrame(
+                self.expandedPanelFrame(
+                    shellHeight: targetShellHeight,
+                    on: self.panel.screen ?? NSScreen.main
+                )
+            )
+        }
+
+        if prefersReducedMotion {
+            resize()
+        } else {
+            let workItem = DispatchWorkItem(block: resize)
+            tasksCanvasResizeWorkItem = workItem
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + animationProfile.primaryFeatureSelectionResponse,
+                execute: workItem
+            )
+        }
     }
 
     private var hideAnimationDuration: TimeInterval {
-        0.22 * runtimeSettings.hideAnimationScale
+        if prefersReducedMotion {
+            return animationProfile.reducedMotionFadeDuration
+        }
+        return animationProfile.hideTransitionDuration * runtimeSettings.hideAnimationScale
     }
 
     private func scaledGestureThreshold(_ value: CGFloat) -> CGFloat {
@@ -406,14 +570,224 @@ final class IslandPanelController {
             onExpansionChange: { [weak self] expanded in
                 self?.setExpanded(expanded)
             },
+            onPrimaryFeatureChange: { [weak self] feature in
+                self?.selectPrimaryFeature(feature)
+            },
+            onDataUsageTimeRangeChange: { [weak self] range in
+                self?.selectDataUsageTimeRange(range)
+            },
+            onRefreshDataUsage: { [weak self] in
+                self?.refreshDataUsage()
+            },
             onDismissCodexTask: { [weak self] task in
                 self?.dismissCodexTask(task)
             },
             onUndoCodexTask: { [weak self] task in
                 self?.restoreCodexTask(task)
             },
+            onCodexTaskSelection: { [weak self] threadID in
+                self?.selectCodexTask(threadID)
+            },
+            onTasksExpansionHeightChange: { [weak self] height in
+                self?.setCodexTasksDetailExpansionHeight(height)
+            },
+            onApprovalDecision: { [weak self] decision, requestID in
+                self?.submitCodexApproval(decision, for: requestID)
+            },
+            onOpenCodexApproval: { [weak self] requestID in
+                self?.openCodexApproval(requestID)
+            },
+            onRetryCodexApproval: { [weak self] in
+                { requestID in
+                    self?.openCodexApproval(requestID)
+                }
+            }(),
             fileShelfActions: actions
         )
+    }
+
+    private func selectCodexTask(_ threadID: String) {
+        overlayState.selectedCodexTaskID = threadID
+        if let codexApprovalCoordinator,
+           codexApprovalCoordinator.selectRequest(threadID: threadID) {
+            return
+        }
+        updatePassiveCodexApprovalPresentation(overlayState.codexStatusBarSnapshot)
+        if overlayState.codexApprovalPresentation.request?.threadID == threadID {
+            presentCodexApprovalAttachmentIfNeeded()
+        } else {
+            dismissCodexApprovalAttachment()
+        }
+    }
+
+    private func logCodexApprovalAuditEvent(_ event: CodexApprovalAuditEvent) {
+        switch event {
+        case .detected(let kind, let source, let pendingCount, let threadIDLength):
+            let sourceValue = source == .managedAppServer
+                ? "managedAppServer"
+                : "passiveObservation"
+            interactionLogger.log("codex.approval.detected", metadata: [
+                "kind": kind.rawValue,
+                "source": sourceValue,
+                "pendingCount": pendingCount,
+                "threadIDLength": threadIDLength
+            ])
+        case .presented(let kind, let inlineCapable):
+            interactionLogger.log("codex.approval.presented", metadata: [
+                "kind": kind.rawValue,
+                "inlineCapable": inlineCapable
+            ])
+        case .decisionSent(let decision, let kind):
+            interactionLogger.log("codex.approval.decision.sent", metadata: [
+                "decision": decision.rawValue,
+                "kind": kind.rawValue
+            ])
+        case .resolved(let kind, let latencyMilliseconds):
+            interactionLogger.log("codex.approval.resolved", metadata: [
+                "kind": kind.rawValue,
+                "latencyMilliseconds": latencyMilliseconds
+            ])
+        case .failed(let kind, let errorCategory):
+            interactionLogger.log("codex.approval.failed", metadata: [
+                "kind": kind.rawValue,
+                "errorCategory": errorCategory.rawValue
+            ])
+        }
+    }
+
+    private func submitCodexApproval(
+        _ decision: CodexApprovalDecision,
+        for requestID: CodexApprovalRequest.ID
+    ) {
+        guard let codexApprovalCoordinator else {
+            openCodexApproval(requestID)
+            return
+        }
+        Task { [weak self] in
+            do {
+                try await codexApprovalCoordinator.submit(decision, for: requestID)
+            } catch CodexApprovalCoordinatorError.capabilityUnavailable {
+                self?.openCodexApproval(requestID)
+            } catch {
+                // The coordinator publishes a sanitized failure state.
+            }
+        }
+    }
+
+    private func openCodexApproval(_ requestID: CodexApprovalRequest.ID) {
+        guard overlayState.codexApprovalPresentation.request?.id == requestID else { return }
+        var applicationOpenState: CodexApprovalApplicationOpenState = codexApprovalApplicationOpenState
+        let attempt = applicationOpenState.begin(requestID: requestID)
+        codexApprovalApplicationOpenState = applicationOpenState
+        guard let applicationURL = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: "com.openai.codex"
+        ) else {
+            completeCodexApprovalApplicationOpenAttempt(
+                attempt,
+                requestID: requestID,
+                succeeded: false
+            )
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(
+            at: applicationURL,
+            configuration: configuration,
+            completionHandler: { [weak self] application, error in
+                Task { @MainActor in
+                    self?.completeCodexApprovalApplicationOpenAttempt(
+                        attempt,
+                        requestID: requestID,
+                        succeeded: application != nil && error == nil
+                    )
+                }
+            }
+        )
+    }
+
+    private func completeCodexApprovalApplicationOpenAttempt(
+        _ attempt: CodexApprovalApplicationOpenAttempt,
+        requestID: CodexApprovalRequest.ID,
+        succeeded: Bool
+    ) {
+        let completion = codexApprovalApplicationOpenState.complete(
+            attempt,
+            currentRequestID: overlayState.codexApprovalPresentation.request?.id,
+            succeeded: succeeded
+        )
+        switch completion {
+        case .ignored:
+            return
+        case .succeeded:
+            refreshCodexApprovalPresentation(for: requestID)
+        case .failed:
+            publishCodexOpenFailure(for: requestID)
+        }
+    }
+
+    private func refreshCodexApprovalPresentation(
+        for requestID: CodexApprovalRequest.ID
+    ) {
+        guard overlayState.codexApprovalPresentation.request?.id == requestID else { return }
+        if codexApprovalApplicationOpenState.hasFailure(for: requestID) {
+            publishCodexOpenFailure(for: requestID)
+            return
+        }
+        if let presentation = codexApprovalCoordinator?.presentation,
+           presentation.request?.id == requestID {
+            updateManagedCodexApprovalPresentation(presentation)
+        } else {
+            updatePassiveCodexApprovalPresentation(overlayState.codexStatusBarSnapshot)
+        }
+    }
+
+    private func publishCodexOpenFailure(for requestID: CodexApprovalRequest.ID) {
+        let current = overlayState.codexApprovalPresentation
+        guard let request = current.request, request.id == requestID else { return }
+        overlayState.codexApprovalPresentation = CodexApprovalPresentation(
+            request: request,
+            pendingCount: current.pendingCount,
+            submissionState: .failed("无法打开 Codex"),
+            pendingThreadIDs: current.pendingThreadIDs
+        )
+        logCodexApprovalAuditEvent(.failed(
+            kind: request.kind,
+            errorCategory: .applicationUnavailable
+        ))
+    }
+
+    private func updateManagedCodexApprovalPresentation(
+        _ presentation: CodexApprovalPresentation
+    ) {
+        if let request = presentation.request,
+           let selectedCodexTaskID = overlayState.selectedCodexTaskID,
+           request.threadID != selectedCodexTaskID {
+            updatePassiveCodexApprovalPresentation(overlayState.codexStatusBarSnapshot)
+            return
+        }
+
+        let requestID = presentation.request?.id
+        codexApprovalApplicationOpenState.requestDidChange(to: requestID)
+        if let requestID,
+           codexApprovalApplicationOpenState.hasFailure(for: requestID) {
+            overlayState.codexApprovalPresentation = CodexApprovalPresentation(
+                request: presentation.request,
+                pendingCount: presentation.pendingCount,
+                submissionState: .failed("无法打开 Codex"),
+                pendingThreadIDs: presentation.pendingThreadIDs
+            )
+        } else {
+            overlayState.codexApprovalPresentation = presentation
+        }
+
+        guard let request = overlayState.codexApprovalPresentation.request,
+              request.threadID == overlayState.selectedCodexTaskID
+        else {
+            dismissCodexApprovalAttachment()
+            return
+        }
+        presentCodexApprovalAttachmentIfNeeded()
     }
 
     private func dismissCodexTask(_ task: CodexTaskStatus) {
@@ -426,6 +800,28 @@ final class IslandPanelController {
             "turnIDLength": task.turnID?.count ?? 0,
             "activity": task.activityState.rawValue
         ])
+    }
+
+    private func handleManagedCodexApprovalRequest(_ request: CodexApprovalRequest) {
+        let action = CodexApprovalAutoPresentationPolicy.action(
+            isShellHidden: overlayState.isShellHidden,
+            isFilesPinned: overlayState.selectedPrimaryFeature == .files
+                && overlayState.isFileShelfPinnedOpen,
+            isExpanded: isExpanded
+        )
+        guard action != .ignore else { return }
+        overlayState.selectedCodexTaskID = request.threadID
+        guard codexApprovalCoordinator?.selectRequest(threadID: request.threadID) == true else {
+            return
+        }
+        guard action != .selectTaskOnly else {
+            return
+        }
+        selectPrimaryFeature(.tasks)
+        if action == .selectTasksAndExpand {
+            setExpanded(true)
+        }
+        presentCodexApprovalAttachmentIfNeeded()
     }
 
     private func restoreCodexTask(_ task: CodexTaskStatus) {
@@ -478,10 +874,7 @@ final class IslandPanelController {
         }
         hostingView.onMouseExited = { [weak self] in
             guard let self else { return }
-            self.overlayState.isHovered = false
-            if self.shouldCollapseOnMouseExit() {
-                self.setExpanded(false)
-            }
+            self.syncHoverWithPointer()
             self.interactionLogger.log("hover.exited", metadata: [
                 "isExpanded": self.isExpanded,
                 "fileShelfPinned": self.overlayState.isFileShelfPinnedOpen,
@@ -537,11 +930,13 @@ final class IslandPanelController {
 
     private func selectTemporaryFiles(ids: [TemporaryShelfItem.ID], extendingSelection: Bool) {
         let itemIDs = Set(ids)
-        if extendingSelection {
-            temporaryFileShelfSelection.select(temporaryFileShelfSelection.selectedItemIDs.union(itemIDs))
-        } else {
-            temporaryFileShelfSelection.select(itemIDs)
-        }
+        let currentSelectedItemIDs = temporaryFileShelfSelection.selectedItemIDs
+        let nextSelectedItemIDs = extendingSelection
+            ? currentSelectedItemIDs.union(itemIDs)
+            : itemIDs
+        guard nextSelectedItemIDs != currentSelectedItemIDs else { return }
+
+        temporaryFileShelfSelection.select(nextSelectedItemIDs)
         syncTemporaryFileShelfSelectionState()
         interactionLogger.log("file.shelf.select", metadata: [
             "selectedCount": temporaryFileShelfSelection.selectedItemIDs.count,
@@ -655,6 +1050,8 @@ final class IslandPanelController {
         if !isExpanded {
             setExpanded(true)
         }
+        dismissCodexApprovalAttachment()
+        setCodexTasksDetailExpansionHeight(0)
         overlayState.selectedPrimaryFeature = .files
         overlayState.isFileShelfOverlayVisible = false
         syncFilesPinnedOpenState()
@@ -666,11 +1063,117 @@ final class IslandPanelController {
         ])
     }
 
+    private func selectPrimaryFeature(_ feature: IslandPrimaryFeature) {
+        guard feature != .files else {
+            openFilesPrimaryFeature()
+            return
+        }
+        guard overlayState.selectedPrimaryFeature != feature else { return }
+
+        if overlayState.selectedPrimaryFeature == .files {
+            closeFilesPrimaryFeature()
+        }
+        if feature != .tasks {
+            setCodexTasksDetailExpansionHeight(0)
+        }
+        lastNonFilesPrimaryFeature = feature
+        overlayState.selectedPrimaryFeature = feature
+        if feature == .tasks {
+            presentCodexApprovalAttachmentIfNeeded()
+        } else {
+            dismissCodexApprovalAttachment()
+        }
+        if feature == .data, case .idle = overlayState.dataUsagePresentation {
+            refreshDataUsage()
+        }
+    }
+
+    private func selectDataUsageTimeRange(_ range: UsageTimeRange) {
+        overlayState.dataUsageTimeRange = range
+        refreshDataUsage()
+    }
+
+    private func refreshDataUsage() {
+        let selectedRange = overlayState.dataUsageTimeRange
+        let now = Date()
+        let timeZone = TimeZone.current
+        let window = selectedRange.queryWindow(now: now, timeZone: timeZone)
+        dataUsageRefreshGeneration += 1
+        let generation = dataUsageRefreshGeneration
+        let requestIdentity = UsageRefreshRequestIdentity(
+            generation: generation,
+            range: selectedRange
+        )
+        let previous = overlayState.dataUsagePresentation.snapshot.flatMap {
+            $0.queryWindow.range == selectedRange ? $0 : nil
+        }
+        overlayState.dataUsagePresentation = .loading(previous: previous)
+        dataUsageRefreshTask?.cancel()
+        let loader = usageSnapshotLoader
+        let refreshStartedAt = ProcessInfo.processInfo.systemUptime
+        interactionLogger.log("data.usage.refresh.started", metadata: [
+            "range": selectedRange.rawValue
+        ])
+        dataUsageRefreshTask = Task { [weak self, loader] in
+            let outcome = await loader.loadSnapshot(in: window, refreshedAt: now)
+            guard let self,
+                  requestIdentity.permitsPublication(
+                    currentGeneration: self.dataUsageRefreshGeneration,
+                    currentRange: self.overlayState.dataUsageTimeRange,
+                    isCancelled: Task.isCancelled
+                  ) else { return }
+            let durationMs = Int(max(
+                0,
+                ((ProcessInfo.processInfo.systemUptime - refreshStartedAt) * 1_000).rounded()
+            ))
+            self.publishDataUsage(outcome, range: selectedRange, durationMs: durationMs)
+        }
+    }
+
+    private func publishDataUsage(
+        _ outcome: UsageAggregationOutcome,
+        range: UsageTimeRange,
+        durationMs: Int
+    ) {
+        switch outcome {
+        case .cancelled:
+            return
+        case .snapshot(let snapshot):
+            if snapshot.completeness == .partial {
+                overlayState.dataUsagePresentation = .partial(snapshot)
+            } else if snapshot.tokens.realTotal == 0 {
+                overlayState.dataUsagePresentation = .empty(snapshot)
+            } else {
+                overlayState.dataUsagePresentation = .available(snapshot)
+            }
+            interactionLogger.log("data.usage.refresh.completed", metadata: [
+                "range": range.rawValue,
+                "totalTokens": snapshot.tokens.realTotal,
+                "requestCount": snapshot.requestCount,
+                "durationMs": durationMs,
+                "scannedFileCount": snapshot.scannedFileCount,
+                "completeness": snapshot.completeness == .partial ? "partial" : "complete",
+                "warnings": snapshot.warnings.map(\.rawValue).sorted()
+            ])
+        case .failed(let warnings):
+            overlayState.dataUsagePresentation = .failed(warnings)
+            interactionLogger.log("data.usage.refresh.failed", metadata: [
+                "range": range.rawValue,
+                "durationMs": durationMs,
+                "warnings": warnings.map(\.rawValue).sorted()
+            ])
+        }
+    }
+
     private func closeFilesPrimaryFeature() {
         overlayState.selectedPrimaryFeature = lastNonFilesPrimaryFeature
         overlayState.isFileShelfOverlayVisible = false
         overlayState.isFileShelfPinnedOpen = false
         overlayState.isFileDropTargetActive = false
+        presentCodexApprovalAttachmentIfNeeded()
+        if lastNonFilesPrimaryFeature == .data, case .idle = overlayState.dataUsagePresentation {
+            refreshDataUsage()
+        }
         interactionLogger.log("file.files.closed", metadata: [
             "itemCount": temporaryFileShelfStore.shelf.items.count,
             "restoredPrimaryFeature": lastNonFilesPrimaryFeature.rawValue
@@ -1060,11 +1563,9 @@ final class IslandPanelController {
         case .idle:
             break
         case .tracking(let direction, let progress):
-            withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.82)) {
-                overlayState.musicSkipFeedbackDirection = direction
-                overlayState.musicSkipGestureProgress = progress
-                overlayState.isMusicSkipArmed = false
-            }
+            overlayState.musicSkipFeedbackDirection = direction
+            overlayState.musicSkipGestureProgress = progress
+            overlayState.isMusicSkipArmed = false
         case .armed(let direction, let progress):
             if !Self.isArmedMusicSkipState(previousState) {
                 interactionLogger.log("music.skip.armed", metadata: [
@@ -1072,9 +1573,9 @@ final class IslandPanelController {
                     "deltaX": Double(accumulatedScrollDeltaX)
                 ])
             }
+            overlayState.musicSkipFeedbackDirection = direction
+            overlayState.musicSkipGestureProgress = progress
             withAnimation(.easeOut(duration: 0.10)) {
-                overlayState.musicSkipFeedbackDirection = direction
-                overlayState.musicSkipGestureProgress = progress
                 overlayState.isMusicSkipArmed = true
             }
         case .cancelled(let direction):
@@ -1173,7 +1674,7 @@ final class IslandPanelController {
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            withAnimation(.easeIn(duration: 0.18)) {
+            withAnimation(.easeOut(duration: animationProfile.musicSkipFeedbackDismissDuration)) {
                 self.overlayState.musicSkipGestureProgress = 0
                 self.overlayState.musicSkipFeedbackDirection = nil
             }
@@ -1234,6 +1735,7 @@ final class IslandPanelController {
             "hidden": hidden
         ])
         if hidden {
+            removePointerPassthroughMonitor()
             overlayState.isHovered = false
             overlayState.isTrackInfoPresented = false
             overlayState.musicSkipGestureProgress = 0
@@ -1245,13 +1747,9 @@ final class IslandPanelController {
             musicSkipFeedbackWorkItem = nil
             resetScrollGesture()
             setExpanded(false)
-        } else {
-            panel.ignoresMouseEvents = false
-            removeHiddenScrollMonitor()
-            syncHoverWithPointer()
         }
         let animationDuration = hideAnimationDuration
-        withAnimation(.easeInOut(duration: animationDuration)) {
+        withAnimation(.easeOut(duration: animationDuration)) {
             overlayState.isShellHidden = hidden
         }
         if hidden {
@@ -1260,6 +1758,10 @@ final class IslandPanelController {
                 guard let self, self.overlayState.isShellHidden else { return }
                 self.panel.ignoresMouseEvents = hidden
             }
+        } else {
+            panel.ignoresMouseEvents = false
+            removeHiddenScrollMonitor()
+            syncHoverWithPointer()
         }
     }
 
@@ -1287,8 +1789,66 @@ final class IslandPanelController {
         }
     }
 
+    private func installPointerPassthroughMonitor() {
+        guard pointerPassthroughMonitor == nil else { return }
+        guard panel.isVisible, panel.ignoresMouseEvents, !overlayState.isShellHidden else { return }
+        let syncSource = pointerPassthroughEventSource()
+        pointerPassthroughMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged]) { _ in
+            syncSource.add(data: 1)
+        }
+    }
+
+    private func pointerPassthroughEventSource() -> DispatchSourceUserDataAdd {
+        if let pointerPassthroughSyncSource {
+            return pointerPassthroughSyncSource
+        }
+
+        let source = DispatchSource.makeUserDataAddSource(queue: .main)
+        source.setEventHandler { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.pointerPassthroughMonitor != nil else { return }
+                guard self.panel.isVisible, self.panel.ignoresMouseEvents, !self.overlayState.isShellHidden else { return }
+                self.syncHoverWithPointer()
+            }
+        }
+        source.resume()
+        pointerPassthroughSyncSource = source
+        return source
+    }
+
+    private func removePointerPassthroughMonitor() {
+        if let pointerPassthroughMonitor {
+            NSEvent.removeMonitor(pointerPassthroughMonitor)
+            self.pointerPassthroughMonitor = nil
+        }
+    }
+
     private func syncHoverWithPointer() {
-        overlayState.isHovered = pointerInsideInteractiveShell()
+        let pointerInsideIsland = pointerInsideInteractiveShell()
+        let shouldHover = pointerInsideIsland && !overlayState.isShellHidden
+        if overlayState.isHovered != shouldHover {
+            overlayState.isHovered = shouldHover
+        }
+        guard !overlayState.isShellHidden else { return }
+        collapseExpandedShellIfPointerLeavesInteractiveShell(pointerInsideIsland)
+        syncMouseEventPassthroughWithPointer(isPointerInside: pointerInsideIsland)
+    }
+
+    private func collapseExpandedShellIfPointerLeavesInteractiveShell(_ isPointerInside: Bool) {
+        guard !isPointerInside, isExpanded, shouldCollapseOnMouseExit() else { return }
+        setExpanded(false)
+    }
+
+    private func syncMouseEventPassthroughWithPointer(isPointerInside: Bool) {
+        let shouldIgnoreMouseEvents = !isPointerInside
+        if panel.ignoresMouseEvents != shouldIgnoreMouseEvents {
+            panel.ignoresMouseEvents = shouldIgnoreMouseEvents
+        }
+        if shouldIgnoreMouseEvents {
+            installPointerPassthroughMonitor()
+        } else {
+            removePointerPassthroughMonitor()
+        }
     }
 
     private func pointerInsideInteractiveShell() -> Bool {
@@ -1296,6 +1856,13 @@ final class IslandPanelController {
     }
 
     private func pointInsideInteractiveShell(_ mouseLocation: NSPoint) -> Bool {
+        if pointInsideBaseShell(mouseLocation) {
+            return true
+        }
+        return pointInsideApprovalAttachment(mouseLocation)
+    }
+
+    private func pointInsideBaseShell(_ mouseLocation: NSPoint) -> Bool {
         let shellFrame = currentShellFrameInScreenCoordinates
         guard shellFrame.insetBy(dx: -2, dy: -2).contains(mouseLocation) else { return false }
 
@@ -1304,6 +1871,25 @@ final class IslandPanelController {
             y: shellFrame.maxY - mouseLocation.y
         )
         return currentShellPathForHitTesting(in: CGRect(origin: .zero, size: shellFrame.size)).contains(localPoint)
+    }
+
+    private func pointInsideApprovalAttachment(_ mouseLocation: NSPoint) -> Bool {
+        guard isExpanded,
+              overlayState.isCodexApprovalAttachmentPresented,
+              overlayState.selectedPrimaryFeature == .tasks
+        else { return false }
+
+        let attachmentFrame = CodexTasksApprovalLayout(
+            metrics: metrics,
+            shellHeight: currentShellHeightForHitTesting
+        ).attachmentFrame
+        let screenFrame = NSRect(
+            x: panel.frame.minX + attachmentFrame.minX,
+            y: panel.frame.maxY - attachmentFrame.maxY,
+            width: attachmentFrame.width,
+            height: attachmentFrame.height
+        )
+        return screenFrame.insetBy(dx: -2, dy: -2).contains(mouseLocation)
     }
 
     private func screenPointFromDraggingLocation(_ dropPoint: NSPoint) -> NSPoint {
@@ -1323,13 +1909,15 @@ final class IslandPanelController {
     private var currentShellFrameInScreenCoordinates: NSRect {
         let shellWidth = currentShellWidthForHitTesting
         let shellHeight = currentShellHeightForHitTesting
+        let hasAdditionalRightCanvas = isExpanded && panel.frame.width > metrics.openWidth + 0.5
         return NSRect(
-            x: panel.frame.midX - (shellWidth / 2) + currentShellHorizontalOffsetForHitTesting,
+            x: hasAdditionalRightCanvas
+                ? panel.frame.minX
+                : panel.frame.midX - (shellWidth / 2) + currentShellHorizontalOffsetForHitTesting,
             y: panel.frame.maxY - shellHeight,
             width: shellWidth,
             height: shellHeight
         )
-        .insetBy(dx: -2, dy: -2)
     }
 
     private var currentShellWidthForHitTesting: CGFloat {
@@ -1340,7 +1928,7 @@ final class IslandPanelController {
 
     private var currentShellHeightForHitTesting: CGFloat {
         if isExpanded {
-            metrics.openHeight
+            metrics.openHeight + overlayState.codexTasksDetailExpansionHeight
         } else if overlayState.isTrackInfoPresented {
             metrics.musicTrackInfoShellHeight
         } else {
@@ -1529,16 +2117,18 @@ final class IslandPanelController {
                     continue
                 }
 
-            let snapshot = await Task.detached(priority: .utility) {
-                codexStatusSignalSource.currentSnapshot()
-            }.value
+                let snapshot = await Task.detached(priority: .utility) {
+                    codexStatusSignalSource.currentSnapshot()
+                }.value
 
-            lastSnapshotRefreshDate = Date()
-            for task in snapshot.tasks where task.activityState.isWorking {
-                codexTaskDismissalStore.restore(task.dismissalKey)
-            }
-            overlayState.dismissedCodexTaskKeys = codexTaskDismissalStore.activeKeys()
-            self.overlayState.codexStatusBarSnapshot = snapshot
+                lastSnapshotRefreshDate = Date()
+                for task in snapshot.tasks where task.activityState.isWorking {
+                    codexTaskDismissalStore.restore(task.dismissalKey)
+                }
+                overlayState.dismissedCodexTaskKeys = codexTaskDismissalStore.activeKeys()
+                self.overlayState.codexStatusBarSnapshot = snapshot
+                updatePassiveCodexApprovalPresentation(snapshot)
+                handleCodexApprovalTransition(snapshot)
 
                 let logSummary = [
                     snapshot.threadID ?? "",
@@ -1597,6 +2187,195 @@ final class IslandPanelController {
         }
     }
 
+    private func presentCodexApprovalAttachmentIfNeeded() {
+        guard isExpanded,
+              overlayState.selectedPrimaryFeature == .tasks,
+              let request = overlayState.codexApprovalPresentation.request,
+              request.threadID == overlayState.selectedCodexTaskID,
+              !overlayState.isShellHidden
+        else { return }
+
+        approvalAttachmentResizeWorkItem?.cancel()
+        approvalAttachmentResizeWorkItem = nil
+        let layout = CodexTasksApprovalLayout(
+            metrics: metrics,
+            shellHeight: expandedTasksShellHeight
+        )
+        setPanelFrame(
+            expandedPanelFrame(
+                shellHeight: expandedTasksShellHeight,
+                additionalRightWidth: layout.additionalCanvasWidth,
+                on: panel.screen ?? NSScreen.main
+            )
+        )
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let overlayState = self.overlayState
+            guard self.isExpanded,
+                  overlayState.selectedPrimaryFeature == .tasks,
+                  let request = overlayState.codexApprovalPresentation.request,
+                  request.threadID == overlayState.selectedCodexTaskID,
+                  !overlayState.isShellHidden
+            else { return }
+            withAnimation(self.approvalAttachmentPresentationAnimation) {
+                overlayState.isCodexApprovalAttachmentPresented = true
+            }
+            self.logCodexApprovalPresentedIfNeeded(request)
+        }
+    }
+
+    private func logCodexApprovalPresentedIfNeeded(_ request: CodexApprovalRequest) {
+        guard overlayState.isCodexApprovalAttachmentPresented,
+              overlayState.codexApprovalPresentation.request?.id == request.id,
+              loggedCodexApprovalPresentedRequestIDs.insert(request.id).inserted
+        else { return }
+        logCodexApprovalAuditEvent(.presented(
+            kind: request.kind,
+            inlineCapable: request.canRespondInline
+        ))
+    }
+
+    private func dismissCodexApprovalAttachment(shrinkPanel: Bool = true) {
+        approvalAttachmentResizeWorkItem?.cancel()
+        approvalAttachmentResizeWorkItem = nil
+        let hasAdditionalRightCanvas = isExpanded && panel.frame.width > metrics.openWidth + 0.5
+        guard overlayState.isCodexApprovalAttachmentPresented || hasAdditionalRightCanvas else {
+            return
+        }
+        withAnimation(approvalAttachmentDismissAnimation) {
+            overlayState.isCodexApprovalAttachmentPresented = false
+        }
+
+        guard shrinkPanel, isExpanded else { return }
+        let resize = { [weak self] in
+            guard let self,
+                  self.isExpanded,
+                  !self.overlayState.isCodexApprovalAttachmentPresented
+            else { return }
+            self.setPanelFrame(
+                self.expandedPanelFrame(
+                    shellHeight: self.expandedTasksShellHeight,
+                    additionalRightWidth: 0,
+                    on: self.panel.screen ?? NSScreen.main
+                )
+            )
+        }
+        let workItem = DispatchWorkItem(block: resize)
+        approvalAttachmentResizeWorkItem = workItem
+        let delay = prefersReducedMotion
+            ? animationProfile.reducedMotionFadeDuration
+            : animationProfile.attachedElementCollapseDuration
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func updatePassiveCodexApprovalPresentation(_ snapshot: CodexStatusBarSnapshot) {
+        let managedPresentation = codexApprovalCoordinator?.presentation
+        if let managedRequest = managedPresentation?.request,
+           managedRequest.threadID == overlayState.selectedCodexTaskID {
+            return
+        }
+        let managedPendingThreadIDs = managedPresentation?.pendingThreadIDs ?? []
+        let pendingTasks = snapshot.tasks.filter {
+            $0.approvalState.requiresManualApproval
+        }
+        let pendingThreadIDs = managedPendingThreadIDs.union(pendingTasks.map(\.id))
+        let task: CodexTaskStatus?
+        if let selectedCodexTaskID = overlayState.selectedCodexTaskID {
+            task = pendingTasks.first { $0.id == selectedCodexTaskID }
+        } else {
+            task = pendingTasks.first
+        }
+        guard let task else {
+            codexApprovalApplicationOpenState.requestDidChange(to: nil)
+            overlayState.codexApprovalPresentation = CodexApprovalPresentation(
+                request: nil,
+                pendingCount: pendingThreadIDs.count,
+                submissionState: .ready,
+                pendingThreadIDs: pendingThreadIDs
+            )
+            dismissCodexApprovalAttachment()
+            return
+        }
+
+        let kind: CodexApprovalKind
+        switch task.approvalState {
+        case .pending, .pendingCommand:
+            kind = .command
+        case .pendingFileChange:
+            kind = .fileChange
+        case .pendingPermissions:
+            kind = .permissions
+        case .none, .autoReviewing:
+            return
+        }
+
+        let request = CodexApprovalRequest.passive(
+            threadID: task.id,
+            turnID: task.turnID ?? "",
+            kind: kind,
+            startedAtMilliseconds: 0
+        )
+        codexApprovalApplicationOpenState.requestDidChange(to: request.id)
+        overlayState.codexApprovalPresentation = CodexApprovalPresentation(
+            request: request,
+            pendingCount: pendingThreadIDs.count,
+            submissionState: codexApprovalApplicationOpenState.hasFailure(for: request.id)
+                ? .failed("无法打开 Codex")
+                : .ready,
+            pendingThreadIDs: pendingThreadIDs
+        )
+    }
+
+    private func handleCodexApprovalTransition(_ snapshot: CodexStatusBarSnapshot) {
+        let pendingTasks = snapshot.tasks.filter {
+            $0.approvalState.requiresManualApproval
+        }
+        let keys = Set(pendingTasks.map {
+            [$0.id, $0.turnID ?? "", $0.approvalState.rawValue].joined(separator: "|")
+        })
+        let newKeys = keys.subtracting(lastObservedPassiveApprovalKeys)
+        lastObservedPassiveApprovalKeys = keys
+
+        let action = CodexApprovalAutoPresentationPolicy.action(
+            isShellHidden: overlayState.isShellHidden,
+            isFilesPinned: overlayState.selectedPrimaryFeature == .files
+                && overlayState.isFileShelfPinnedOpen,
+            isExpanded: isExpanded
+        )
+
+        guard !newKeys.isEmpty,
+              let task = pendingTasks.first(where: {
+                  newKeys.contains([$0.id, $0.turnID ?? "", $0.approvalState.rawValue].joined(separator: "|"))
+              }),
+              !overlayState.isShellHidden,
+              action != .ignore
+        else { return }
+
+        overlayState.selectedCodexTaskID = task.id
+        updatePassiveCodexApprovalPresentation(snapshot)
+        if let request = overlayState.codexApprovalPresentation.request,
+           request.threadID == task.id {
+            logCodexApprovalAuditEvent(.detected(
+                kind: request.kind,
+                source: request.source,
+                pendingCount: pendingTasks.count,
+                threadIDLength: request.threadID.count
+            ))
+        }
+
+        if overlayState.selectedPrimaryFeature == .files,
+           overlayState.isFileShelfPinnedOpen {
+            return
+        }
+
+        selectPrimaryFeature(.tasks)
+        if !isExpanded {
+            setExpanded(true)
+        }
+        presentCodexApprovalAttachmentIfNeeded()
+    }
+
     private func startTemporaryFileShelfPruning() {
         temporaryFileShelfPruningTask?.cancel()
         temporaryFileShelfPruningTask = Task { [weak self] in
@@ -1648,7 +2427,7 @@ final class IslandPanelController {
                 on: panel.screen ?? NSScreen.main
             )
         )
-        withAnimation(.linear(duration: 0.22)) {
+        withAnimation(prefersReducedMotion ? nil : .easeOut(duration: animationProfile.trackInfoTransitionDuration)) {
             overlayState.isTrackInfoPresented = true
         }
         interactionLogger.log("track.info.shown", metadata: [
@@ -1658,11 +2437,12 @@ final class IslandPanelController {
 
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            withAnimation(.linear(duration: 0.22)) {
+            withAnimation(self.prefersReducedMotion ? nil : .easeOut(duration: self.animationProfile.trackInfoTransitionDuration)) {
                 self.overlayState.isTrackInfoPresented = false
             }
             self.interactionLogger.log("track.info.dismissed")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
+            let frameDelay = self.prefersReducedMotion ? 0 : self.animationProfile.trackInfoTransitionDuration
+            DispatchQueue.main.asyncAfter(deadline: .now() + frameDelay) { [weak self] in
                 guard let self, !self.overlayState.isTrackInfoPresented, !self.overlayState.usesOpenCanvas else { return }
                 self.setPanelFrame(
                     Self.windowFrame(
@@ -1677,7 +2457,16 @@ final class IslandPanelController {
     }
 
     private func position(on screen: NSScreen?) {
-        setPanelFrame(Self.windowFrame(for: panel.frame.size, on: screen))
+        if overlayState.usesOpenCanvas {
+            setPanelFrame(
+                expandedPanelFrame(
+                    shellHeight: expandedTasksShellHeight,
+                    on: screen
+                )
+            )
+        } else {
+            setPanelFrame(Self.windowFrame(for: panel.frame.size, on: screen))
+        }
     }
 
     private func setPanelFrame(_ frame: NSRect?) {
@@ -1688,12 +2477,36 @@ final class IslandPanelController {
     private static func windowSize(
         for metrics: NotchMetrics,
         usesOpenCanvas: Bool,
-        showsTrackInfo: Bool = false
+        showsTrackInfo: Bool = false,
+        expandedShellHeight requestedExpandedShellHeight: CGFloat? = nil
     ) -> CGSize {
-        guard !usesOpenCanvas else { return metrics.openCanvasWindowSize }
+        if usesOpenCanvas {
+            let expandedShellHeight = max(metrics.openHeight, requestedExpandedShellHeight ?? metrics.openHeight)
+            return CGSize(
+                width: metrics.openWidth,
+                height: expandedShellHeight + NotchMetrics.defaultClosedCanvasBottomSlack
+            )
+        }
         return CGSize(
             width: metrics.musicClosedShellWidth + NotchMetrics.closedCanvasHorizontalSlack,
             height: (showsTrackInfo ? metrics.musicTrackInfoShellHeight : metrics.closedHeight) + NotchMetrics.closedHoverBottomSlack
+        )
+    }
+
+    private static func expandedWindowFrame(
+        metrics: NotchMetrics,
+        shellHeight: CGFloat,
+        additionalRightWidth: CGFloat,
+        on screen: NSScreen?
+    ) -> NSRect? {
+        guard let screen else { return nil }
+        let baseX = screen.frame.midX - (metrics.openWidth / 2)
+        let width = metrics.openWidth + max(0, additionalRightWidth)
+        return NSRect(
+            x: baseX,
+            y: screen.frame.maxY - shellHeight - NotchMetrics.defaultClosedCanvasBottomSlack,
+            width: width,
+            height: shellHeight + NotchMetrics.defaultClosedCanvasBottomSlack
         )
     }
 

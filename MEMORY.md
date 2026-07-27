@@ -18,7 +18,7 @@ history. Use git history for the pre-consolidation line-by-line event log.
 
 ## Current Snapshot
 
-- Date: 2026-07-10.
+- Date: 2026-07-14.
 - Branch observed during consolidation: `main`.
 - Product: native macOS Dynamic Island-style desktop app for notched and
   non-notched displays.
@@ -54,9 +54,10 @@ history. Use git history for the pre-consolidation line-by-line event log.
 - Hidden shell state has priority over hover, click, and horizontal skip.
 - File Shelf stores only temporary file URL references in memory. Logs must not
   include raw paths or file names.
-- Data reads `~/.cc-switch/cc-switch.db` read-only and mirrors successful
-  snapshots to local app support so the panel can show the last known usage
-  when cc-switch is unavailable.
+- Data diffs each canonical Codex rollout's full cumulative Token sequence before
+  applying a local natural-day window, then combines it with request-deduplicated
+  non-Codex CC Switch rows. Both sources stay read-only; there is no local usage
+  mirror and no background usage polling.
 
 ## Verification Baseline
 
@@ -92,6 +93,292 @@ New events should use this shape:
 - Verify:
 - Rollback:
 ```
+
+### 2026-07-19 - read-only-data-token-usage-integration
+- Reason: The retained Data primary page needed an accurate local Token summary
+  without double-counting Codex, guessing cache semantics, writing source data,
+  or adding a background refresh loop.
+- Changed:
+  - `Sources/DynamicIslandCore/UsageTimeRange.swift`
+  - `Sources/DynamicIslandCore/UsageSnapshot.swift`
+  - `Sources/DynamicIslandCore/CodexRolloutUsageParser.swift`
+  - `Sources/DynamicIslandCore/IslandAnimationProfile.swift`
+  - `Sources/DynamicIsland/Support/UsageSQLiteQueryRunner.swift`
+  - `Sources/DynamicIsland/Support/CodexUsageSource.swift`
+  - `Sources/DynamicIsland/Support/CCSwitchUsageSource.swift`
+  - `Sources/DynamicIsland/Support/UsageAggregationService.swift`
+  - `Sources/DynamicIsland/Views/DataPrimaryContentView.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayState.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - usage fixture/Core checks, the read-only check script, and this memory
+- Result: Codex usage is derived by per-field cumulative deltas across each
+  canonical thread's complete rollout sequence before `[startUTC, endUTC)`
+  filtering; active/archive moved copies count once and conflicting candidates
+  remain partial. CC Switch permanently excludes Codex and deduplicates only by
+  validated request ID. The four ranges are captured local natural days ending
+  at one refresh `now`, default to Today, and refresh only on first Data entry or
+  an explicit range/refresh action. The controller rejects cancelled, stale
+  generation, and stale-range results. The Data card and local Liquid Glass or
+  fallback drawer expose partial/failed states without a trusted zero, while
+  logs contain only aggregate counts, timing, completeness, and warning
+  categories.
+- Verify: `./script/run_usage_checks.sh`, `swift run
+  DynamicIslandCoreChecks`, `swift build --product DynamicIsland`, and the
+  Task 7 scoped `git diff --check` passed. Real `--live` comparison, packaged
+  app launch, visual/accessibility review, and settled CPU sampling remain the
+  final runtime verification boundary.
+- Rollback: Remove the three new usage Core files, four usage support files,
+  Data primary view, and usage check entry/script; restore the animation profile,
+  overlay state/view, controller, CoreChecks, and this current-contract entry to
+  their Task 7 before snapshots. Preserve unrelated Tasks, approval, Files,
+  music, shell, and historical memory changes.
+
+### 2026-07-16 - centered-shell-expansion-and-collapse-anchor
+- Reason: Frame-level visual diagnosis found that normal expansion moved the
+  closed shell `277.5pt` left before growing right, while collapse shrank toward
+  that left origin and then snapped back to center.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+- Result: The base shell wrapper now always uses centered `.top` alignment
+  inside its fixed 850pt base canvas. Normal, approval-backed, and Reduce Motion
+  expansion therefore share one screen-space center; the approval attachment
+  still extends only the outer canvas to the right. A scoped source contract
+  prevents the shell frame from inheriting `.topLeading` again without being
+  confused by the separate primary-feature mask alignment.
+- Verify: The scoped CoreCheck failed first for both the original
+  `usesOpenCanvas` condition and an incomplete approval-only condition, then
+  `swift run DynamicIslandCoreChecks`, `swift build --product DynamicIsland`,
+  `./script/run_codex_approval_checks.sh`, `./script/build_and_run.sh`, and
+  `git diff --check` passed. A 25-frame main-app expansion capture measured
+  `-0.25pt...0pt` center error; an 11-frame current-source diagnostic collapse
+  measured `-0.5pt...+0.25pt`, replacing the former `-277.5pt` jump with normal
+  half-pixel rounding. Ten settled collapsed CPU samples had a `1.30%` median;
+  the isolated peak did not persist.
+- Rollback: Restore a conditional `.topLeading` shell alignment only if
+  left-origin growth is deliberately selected again. Keep the approval
+  attachment's separate right-side canvas and primary-feature mask contracts.
+
+### 2026-07-15 - bounded-codex-approval-island-handoff
+- Reason: Surface pending Codex approvals inside Tasks without pretending that
+  an arbitrary Codex Desktop session can be approved from another process.
+- Changed:
+  - `Sources/DynamicIslandCore/CodexApprovalFlow.swift`
+  - `Sources/DynamicIslandCore/CodexApprovalApplicationOpenState.swift`
+  - `Sources/DynamicIslandCore/CodexTasksApprovalLayout.swift`
+  - `Sources/DynamicIsland/Support/CodexAppServerApprovalClient.swift`
+  - `Sources/DynamicIsland/Support/CodexApprovalCoordinator.swift`
+  - `Sources/DynamicIsland/Views/CodexApprovalActionView.swift`
+  - approval wiring in the existing Tasks views and `IslandPanelController`
+  - approval behavior runners and Core source-contract checks
+- Result: Production remains passive by default: local Codex state can surface a
+  pending command, file, or permissions request, select Tasks, and offer
+  `前往 Codex`, while hidden and pinned Files keep priority. Managed command/file
+  decisions are implemented behind an injected coordinator with type-preserving
+  JSON-RPC request IDs, once-only responses, targeted resolution, and
+  privacy-safe audit events, but the production coordinator remains `nil` until
+  the Island owns the app-server connection and the turn that produced the
+  request. Permissions remain non-actionable. No Codex database, rollout, or
+  global state is written, and no private Desktop connection or UI automation is
+  used. When more than one request is pending, the summary badge shows the
+  privacy-safe queue count while a single request keeps its approval-kind badge.
+- Verify: `./script/run_codex_approval_checks.sh`, `swift run
+  DynamicIslandCoreChecks`, `swift build --product DynamicIsland`,
+  `git diff --check`, and `./script/build_and_run.sh` passed. A 25-frame capture
+  verified the live no-approval Tasks shell, long-title truncation, large token
+  summary, camera-safe navigation, and the Files count without an approval
+  attachment. Ten expanded CPU samples had a `2.05%` median and ten normally
+  collapsed samples had a `1.05%` median; isolated polling/render peaks did not
+  persist, and the app had no child process. A real decline/accept/
+  acceptForSession round-trip was not run because the current product has no
+  Island-managed `turn/start`; this is the plan's explicit stop condition, not
+  evidence that arbitrary Desktop approvals are supported.
+- Rollback: Remove the approval Core models, client/coordinator/action view,
+  controller and Tasks approval wiring, and approval checks. Preserve the
+  pre-existing Tasks hierarchy, adaptive height, Files, music, and shell work.
+
+### 2026-07-14 - grouped-codex-sessions-and-adaptive-tasks-shell
+- Reason: The flat four-row Codex query allowed recently updated subagents to
+  displace primary sessions, while Tasks always focused the first row and had
+  no way to reveal a large agent group without compressing unrelated sessions.
+- Changed:
+  - `Sources/DynamicIslandCore/CodexStatusBarSnapshot.swift`
+  - `Sources/DynamicIslandCore/CodexTasksAdaptiveLayout.swift`
+  - `Sources/DynamicIslandCore/IslandPrimaryContentLayout.swift`
+  - `Sources/DynamicIsland/Support/CodexStatusSignalSource.swift`
+  - `Sources/DynamicIsland/Views/CodexTasksContentView.swift`
+  - `Sources/DynamicIsland/Views/CodexStatusBarView.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayState.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - the 2026-07-14 Tasks hierarchy design and implementation plan
+- Result: The local Codex reader now selects eight primary sessions before a
+  bounded recursive tree of 24 descendants and preserves parent, root, depth,
+  and agent nickname metadata. Tasks uses a stable master-detail selection:
+  primary sessions stay in the left list, exactly one chevron group can expose
+  recursively indented agents, and hidden or overflowing rows remain reachable
+  by local scrolling. Opening a group adds `10pt + 26pt` per visible agent,
+  capped at five rows and `140pt`; the same height drives the SwiftUI shell,
+  content layout, transparent `NSPanel`, and precise `IslandShape` hit test.
+  Switching features or collapsing resets the contribution. The height spring
+  is critically damped, and Reduce Motion applies geometry immediately.
+- Verify: The new hierarchy, selection, SQL, and height source contracts were
+  each observed failing before implementation. `swift run
+  DynamicIslandCoreChecks`, `swift build --product DynamicIsland`,
+  `./script/build_and_run.sh`, and `git diff --check` passed. The recursive CTE
+  ran read-only against the live `state_5.sqlite` and returned eight roots
+  before 24 descendants with correct root/parent/depth/nickname columns. A
+  final main-repository frame capture showed the 850x200 base Tasks layout.
+  Ten collapsed CPU samples had a `0.6%` median after launch; an expanded debug
+  capture while the existing xhigh/max energy effect and active rollout were
+  running had a `6.7%` median with periodic polling/render peaks, but no new
+  continuous animation or timer was added by Tasks.
+- Rollback: Restore the flat thread query and former single-column
+  `CodexTasksContentView`, remove the hierarchy/adaptive Core models and the
+  controller height callback, and return open canvas and hit testing to
+  `metrics.openHeight`. Keep the pre-existing Codex progress, dismissal, Files,
+  music, and motion work intact.
+
+### 2026-07-14 - screen-space-vertical-primary-entrance
+- Reason: Frame-level review confirmed that the locally vertical Files and
+  Tasks/Data/Tools/Settings entrance still inherited up to `4.5px` of the
+  centered shell-width spring, making the composed path read diagonally. The
+  user requested a strictly top-to-bottom entrance with no left/right motion.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - the expanded-content motion spec and synchronized-primary implementation
+    plan
+  - `plans/README.md`
+  - `MEMORY.md`
+- Result: Files and the right-side primary controls retain their canonical
+  `IslandTopStatusBandLayout` frames but now mount in one stable open-canvas
+  top-band layer. Their X coordinate no longer inherits shell expansion; the
+  only entrance transform remains the shared `6pt` top-to-bottom offset plus
+  opacity over `0.18s linear`, with no stagger. A shell-width mask preserves
+  clipping during expansion and collapse. Controller-routed selection,
+  Files cleanup, hit testing, keyboard ownership, and accessibility hiding are
+  unchanged. Frame QA rejected and removed two intermediate approaches that
+  produced visible left-to-right motion; no animated X compensation remains.
+- Verify: The new CoreChecks contract first failed because the stable canvas
+  layer was absent, then `swift run DynamicIslandCoreChecks`, `swift build
+  --product DynamicIsland`, `git diff --check`, and
+  `./script/build_and_run.sh` passed. The final 25-frame capture measured `0px`
+  X travel for all five controls and a shared Retina-pixel Y sequence of
+  `-12,-10,-8,-5,-2,0` over about `175ms`. Computer Use opened Files and
+  switched back to Tasks. Ten expanded samples had a `1.95%` CPU median and
+  ten collapsed samples had a `0.95%` median; isolated peaks remained tied to
+  existing Codex polling. The final run used only the main repository app.
+- Rollback: Move the two primary mounts back into `islandShell` and remove the
+  canvas layer, mask, and matching CoreChecks only if the small inherited X
+  drift is acceptable again. Do not restore the rejected animated X
+  compensation, which caused a pronounced left-to-right entrance.
+
+### 2026-07-14 - synchronized-linear-primary-entrance
+- Reason: Runtime review found the separately delayed Files icon and the
+  staggered Tasks/Data/Tools/Settings entrance visually inconsistent. The user
+  requested one linear entrance with no sequential reveal.
+- Changed:
+  - `Sources/DynamicIslandCore/IslandAnimationProfile.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - the 2026-07-14 expanded-content motion spec and implementation plan
+  - `plans/012-animate-expanded-primary-content.md` and `plans/README.md`
+  - `MEMORY.md`
+- Result: Files and the entire right-side primary switcher now start after the
+  same `0.34s` settled-shell delay and move together from the existing `6pt`
+  top source using one `0.18s` linear entrance. The switcher animates as one
+  `HStack`; indexed timing and the shared stagger/spring entrance tokens were
+  removed. Selection, press feedback, `0.14s` collapse, `0.20s` Reduce Motion
+  fade, and the delayed Tasks/Files content transition are unchanged.
+- Verify: The new CoreChecks contract first failed because the switcher still
+  used `enumerated()` for stagger timing, then `swift run
+  DynamicIslandCoreChecks`, `swift build --product DynamicIsland`, and
+  `git diff --check`, and `./script/build_and_run.sh` passed. A 25-frame main-app capture showed all five entry
+  points absent in frame 009, appearing together in frame 010, brightening
+  together in frame 011, and settling together in frame 012. Computer Use
+  successfully switched Files to Tasks. Ten expanded samples had a `0.75%`
+  CPU median, and the final collapsed run had a `0.40%` median. The isolated
+  peaks remained tied to existing Codex polling. The final launch had one main
+  repository process, and its log recorded hover enter, expand, collapse, and
+  hover exit.
+- Rollback: Restore the per-button index and spring/stagger profile tokens only
+  if a sequential navigation reveal is deliberately selected again. Do not
+  change the independent primary-content entrance when rolling this back.
+
+### 2026-07-14 - apple-motion-audit-and-expanded-content-entrance
+- Reason: The user requested an `improve-animations` audit followed by an
+  Apple-style implementation and repeat audit. Runtime QA also found that a
+  second app built from an old worktree could overlap the main transparent
+  panel, making hover and clicks appear missing.
+- Changed:
+  - `Sources/DynamicIslandCore/IslandAnimationProfile.swift`
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Views/IslandPressButtonStyle.swift`
+  - Files, File Shelf, waveform, Codex status, tracking, and top-band energy
+    views touched by the selected motion/performance plans
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `docs/superpowers/specs/2026-07-14-expanded-content-motion-design.md`
+  - `plans/001` through `plans/014` and `plans/README.md`
+- Result: Shell geometry remains the transition owner. Top controls enter after
+  `0.34s`; selected Tasks/Files content enters after `0.40s` with a restrained
+  `6pt` source offset and a critically damped `0.30s` spring. Expanded feature
+  switches are immediate and reversible; collapse uses `0.14s` ease-out.
+  Reduce Motion removes spatial/continuous movement and uses a local `0.20s`
+  fade. Primary-feature writes now pass through the controller, leaving Files
+  clears its overlay/pin/drop state, and hidden layers release pointer,
+  keyboard, accessibility, and AppKit drag ownership. Hover publication,
+  selection logging, native icon work, drag validation, and Metal rendering
+  were removed from their pointer/frame hot paths. Only the app under this
+  repository remains running.
+- Verify: Every selected source contract was first observed failing, then
+  `swift run DynamicIslandCoreChecks`, `swift build --product DynamicIsland`,
+  `./script/build_and_run.sh`, and `git diff --check` passed. A 25-frame main-app
+  capture showed shell, controls, and content entering in order. Computer Use
+  clicked Files and Tasks successfully; the sanitized log recorded both open
+  and close events. The final three-domain motion audit and an independent diff
+  review reported no HIGH or MEDIUM findings. Twelve settled CPU samples had a
+  `0.55%` collapsed median and a `3.35%` expanded median; isolated peaks tracked
+  existing Codex status polling rather than continuous animation.
+- Rollback: Remove the expanded-content timing/state and controller-routed
+  primary selection to restore the prior immediate content appearance. Revert
+  the hot-path lifecycle/cache changes only with their matching source-contract
+  checks. If hover or clicks disappear again, first terminate every
+  `DynamicIsland` process and relaunch only this repository's `dist` app.
+
+### 2026-07-10 - precise-shell-actions-and-settled-content-entrance
+- Reason: Visual and interaction QA found transparent panel corners retaining
+  input, completed Tasks actions unreachable, and Files/primary content
+  appearing while the shell was still expanding.
+- Changed:
+  - `Sources/DynamicIsland/Controllers/IslandPanelController.swift`
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - `MEMORY.md`
+- Result: An on-demand pointer monitor now uses the existing `IslandShape` hit
+  test to pass transparent regions through and collapse a visible shell only
+  when the current Files display policy permits it. The monitor exists only
+  while a visible, non-hidden panel is passing mouse events through; returning
+  to the shell, menu hiding, and gesture hiding remove it, and queued callbacks
+  recheck lifecycle state. Raw mouse events feed a main-queue user-data dispatch
+  source, which coalesces bursts instead of creating one MainActor task per
+  event. Completed Tasks retain their
+  existing completion/approval guards while hover, delete, shatter, and Undo
+  are reachable. Files and initial Tasks/Files content wait for the shared
+  primary-feature entrance delay; File Shelf draws above the Tasks layer.
+- Verify: Each new CoreChecks contract failed before its production change, then
+  `swift run DynamicIslandCoreChecks`, `swift build --product DynamicIsland`,
+  and `./script/build_and_run.sh` passed. A 25-frame debug capture kept the
+  early shell frames free of Files/Tasks content and showed the settled UI by
+  frame 014. After the launch refresh, five settled post-optimization samples
+  measured 0.2-1.2% CPU and 0.2% memory.
+- Rollback: Remove the pointer monitor helpers, restore the Tasks hit-test
+  blocker, remove delayed primary-content state and Files entrance animation,
+  and return File Shelf to its former z-index only if these interaction and
+  visual contracts are intentionally retired.
 
 ### 2026-07-10 - codex-completed-task-dismissal
 - Reason: User requested manual removal for completed Tasks rows with a hover

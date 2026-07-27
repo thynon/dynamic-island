@@ -3,13 +3,14 @@ import SwiftUI
 
 struct ClosedMusicWaveformView: NSViewRepresentable {
     let snapshot: MusicWaveformSnapshot
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     func makeNSView(context: Context) -> WaveformBarsView {
         WaveformBarsView()
     }
 
     func updateNSView(_ nsView: WaveformBarsView, context: Context) {
-        nsView.update(levels: snapshot.levels)
+        nsView.update(levels: snapshot.levels, reduceMotion: accessibilityReduceMotion)
     }
 }
 
@@ -40,11 +41,21 @@ final class WaveformBarsView: NSView {
         layoutBars()
     }
 
-    func update(levels: [Double]) {
+    func update(levels: [Double], reduceMotion: Bool) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         for index in bars.indices {
             let scale = scale(for: index, levels: levels)
-            animate(bar: bars[index], index: index, scale: scale)
+            let bar = bars[index]
+            if reduceMotion {
+                bar.removeAnimation(forKey: "waveform-scale")
+                bar.transform = CATransform3DMakeScale(1, max(0.42, scale), 1)
+            } else {
+                bar.transform = CATransform3DIdentity
+                animate(bar: bar, index: index, scale: scale)
+            }
         }
+        CATransaction.commit()
         layoutBars()
     }
 
