@@ -2485,6 +2485,25 @@ private func testDataPrimaryContentViewContracts() {
     expectEqual(triggerSection.contains(".contentShape(triggerShape)"), true, "time trigger hit testing follows the closed shape")
     expectEqual(fallbackControlsSection.contains("fallbackBackground(triggerShape)"), true, "fallback trigger uses the shared closed shape")
     expectEqual(fallbackControlsSection.contains("triggerShape\n                        .stroke"), true, "fallback trigger stroke uses the shared closed shape")
+    expectEqual(dataView.contains("private let drawerWidth"), false, "Data has no wider drawer constant that can overhang the trigger")
+    expectEqual(nativeControlsSection.contains(".frame(width: triggerWidth)"), true, "native drawer uses the exact trigger width")
+    expectEqual(fallbackControlsSection.contains(".frame(width: triggerWidth)"), true, "fallback drawer uses the exact trigger width")
+    expectEqual(optionSection.contains("ZStack"), true, "range options overlay selection decoration without shifting text")
+    expectEqual(optionSection.contains(".frame(maxWidth: .infinity, alignment: .center)"), true, "every range label is centered in the trigger-width column")
+    expectEqual(
+        markersAppearInOrder(
+            [
+                "Image(systemName: \"checkmark\")",
+                ".frame(maxWidth: .infinity, alignment: .leading)",
+                ".accessibilityHidden(true)"
+            ],
+            in: optionSection
+        ),
+        true,
+        "selected checkmark is a leading accessibility-hidden overlay"
+    )
+    expectEqual(optionSection.contains("HStack(spacing: 5)"), false, "range text is not offset by a horizontal marker layout")
+    expectEqual(optionSection.contains("Color.clear"), false, "unselected ranges do not reserve a fake leading marker")
 
     for forbidden in ["Chart", "LineMark", "AreaMark", "sourceFilter", "modelFilter", "clientFilter", "Timer", "TimelineView", "repeatForever"] {
         expectEqual(dataView.contains(forbidden), false, "Data view omits out-of-scope \(forbidden) behavior")

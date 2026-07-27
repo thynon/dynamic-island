@@ -16,7 +16,6 @@ struct DataPrimaryContentView: View {
     @Namespace private var glassNamespace
 
     private let timeRangeOptions = UsageTimeRange.allCases
-    private let drawerWidth: CGFloat = 104
     private let triggerWidth: CGFloat = 72
     private let controlHeight: CGFloat = 24
     private let controlSpacing: CGFloat = 6
@@ -312,7 +311,7 @@ struct DataPrimaryContentView: View {
                 if isTimeRangeDrawerPresented {
                     timeRangeDrawerContent
                         .padding(4)
-                        .frame(width: drawerWidth)
+                        .frame(width: triggerWidth)
                         .glassEffect(.regular.interactive(), in: drawerShape)
                         .glassEffectID(DataGlassEffectID.drawer, in: glassNamespace)
                         .glassEffectTransition(accessibilityReduceMotion ? .identity : .materialize)
@@ -353,7 +352,7 @@ struct DataPrimaryContentView: View {
             if isTimeRangeDrawerPresented {
                 timeRangeDrawerContent
                     .padding(4)
-                    .frame(width: drawerWidth)
+                    .frame(width: triggerWidth)
                     .background {
                         fallbackBackground(drawerShape)
                     }
@@ -433,18 +432,16 @@ struct DataPrimaryContentView: View {
         Button {
             selectTimeRange(range)
         } label: {
-            HStack(spacing: 5) {
+            ZStack {
+                Text(range.displayName)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
                 if range == selectedTimeRange {
                     Image(systemName: "checkmark")
                         .font(.system(size: 7, weight: .bold))
-                        .frame(width: 9)
-                } else {
-                    Color.clear
-                        .frame(width: 9, height: 7)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityHidden(true)
                 }
-
-                Text(range.displayName)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .font(.system(size: 9.5, weight: range == selectedTimeRange ? .semibold : .medium, design: .rounded))
             .foregroundStyle(
