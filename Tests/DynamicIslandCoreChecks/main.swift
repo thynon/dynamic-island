@@ -2467,6 +2467,17 @@ private func testDataPrimaryContentViewContracts() {
     expectEqual(triggerSection.contains("setDrawerPresented(!isTimeRangeDrawerPresented)"), true, "current range trigger only toggles drawer presentation")
     expectEqual(triggerSection.contains("onSelectTimeRange"), false, "opening the drawer does not select a range")
     expectEqual(triggerSection.contains("onRefresh"), false, "opening the drawer does not refresh usage")
+    expectEqual(triggerSection.contains("ZStack"), true, "time trigger overlays its trailing affordance without shifting the centered value")
+    expectEqual(triggerSection.contains(".frame(maxWidth: .infinity, alignment: .center)"), true, "current range is geometrically centered")
+    expectEqual(triggerSection.contains("Image(systemName: \"chevron.up.chevron.down\")"), true, "time trigger uses a fixed up-down selector affordance")
+    expectEqual(triggerSection.contains("isTimeRangeDrawerPresented ? \"chevron.up\" : \"chevron.down\""), false, "time trigger no longer swaps a single chevron")
+    expectEqual(triggerSection.contains(".frame(maxWidth: .infinity, alignment: .trailing)"), true, "double chevron owns the trailing area")
+    expectEqual(triggerSection.contains(".accessibilityHidden(true)"), true, "decorative double chevron is hidden from accessibility")
+    expectEqual(triggerSection.contains("Circle()"), false, "time trigger has no leading circle marker")
+    expectEqual(triggerSection.contains("LinearGradient"), false, "time trigger has no leading color gradient")
+    expectEqual(triggerSection.contains(".contentShape(triggerShape)"), true, "time trigger hit testing follows the closed shape")
+    expectEqual(fallbackControlsSection.contains("fallbackBackground(triggerShape)"), true, "fallback trigger uses the shared closed shape")
+    expectEqual(fallbackControlsSection.contains("triggerShape\n                        .stroke"), true, "fallback trigger stroke uses the shared closed shape")
 
     for forbidden in ["Chart", "LineMark", "AreaMark", "sourceFilter", "modelFilter", "clientFilter", "Timer", "TimelineView", "repeatForever"] {
         expectEqual(dataView.contains(forbidden), false, "Data view omits out-of-scope \(forbidden) behavior")
@@ -2501,7 +2512,9 @@ private func testDataPrimaryContentViewContracts() {
     expectEqual(dataView.contains("#if compiler(>=6.2)"), true, "native Liquid Glass has a compiler availability guard")
     expectEqual(dataView.contains("if #available(macOS 26.0, *), !accessibilityReduceTransparency"), true, "native Liquid Glass also has a runtime and transparency guard")
     expectEqual(dataView.contains("GlassEffectContainer(spacing: 0)"), true, "one zero-spacing glass container owns all Data controls")
-    expectEqual(dataView.contains(".glassEffect(.regular.interactive(), in: Capsule"), true, "time trigger uses interactive capsule glass")
+    expectEqual(dataView.contains("private var triggerShape: RoundedRectangle"), true, "Data centralizes the closed trigger shape")
+    expectEqual(dataView.contains("RoundedRectangle(cornerRadius: 8, style: .continuous)"), true, "time trigger uses the approved 8pt continuous radius")
+    expectEqual(nativeControlsSection.contains(".glassEffect(.regular.interactive(), in: triggerShape)"), true, "time trigger uses interactive closed-shape glass")
     expectEqual(dataView.contains("RoundedRectangle(cornerRadius: 12, style: .continuous)"), true, "drawer and fallback use the approved continuous radius")
     expectEqual(dataView.contains(".glassEffect(.regular.interactive(), in: drawerShape)"), true, "time drawer uses one interactive glass surface")
     expectEqual(dataView.contains("glassEffectID(DataGlassEffectID.trigger"), true, "time trigger owns a unique glass identity")
@@ -2513,7 +2526,7 @@ private func testDataPrimaryContentViewContracts() {
         markersAppearInOrder(
             [
                 "timeRangeTrigger",
-                ".glassEffect(.regular.interactive(), in: Capsule",
+                ".glassEffect(.regular.interactive(), in: triggerShape)",
                 "if isTimeRangeDrawerPresented {",
                 "timeRangeDrawerContent"
             ],

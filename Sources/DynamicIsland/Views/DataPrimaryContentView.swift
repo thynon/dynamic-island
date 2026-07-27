@@ -26,6 +26,10 @@ struct DataPrimaryContentView: View {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
     }
 
+    private var triggerShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+    }
+
     private var displayedSnapshot: UsageSnapshot? {
         switch presentation {
         case .idle, .loading(previous: nil):
@@ -297,7 +301,7 @@ struct DataPrimaryContentView: View {
         GlassEffectContainer(spacing: 0) {
             HStack(alignment: .top, spacing: controlSpacing) {
                 timeRangeTrigger
-                    .glassEffect(.regular.interactive(), in: Capsule(style: .continuous))
+                    .glassEffect(.regular.interactive(), in: triggerShape)
                     .glassEffectID(DataGlassEffectID.trigger, in: glassNamespace)
 
                 refreshButton
@@ -327,10 +331,10 @@ struct DataPrimaryContentView: View {
         HStack(alignment: .top, spacing: controlSpacing) {
             timeRangeTrigger
                 .background {
-                    fallbackBackground(Capsule(style: .continuous))
+                    fallbackBackground(triggerShape)
                 }
                 .overlay(
-                    Capsule(style: .continuous)
+                    triggerShape
                         .stroke(fallbackStrokeColor, lineWidth: colorSchemeContrast == .increased ? 1 : 0.7)
                 )
                 .shadow(color: .black.opacity(0.24), radius: 4, y: 2)
@@ -382,17 +386,21 @@ struct DataPrimaryContentView: View {
         Button {
             setDrawerPresented(!isTimeRangeDrawerPresented)
         } label: {
-            HStack(spacing: 4) {
+            ZStack {
                 Text(selectedTimeRange.displayName)
                     .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .center)
 
-                Image(systemName: isTimeRangeDrawerPresented ? "chevron.up" : "chevron.down")
+                Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 7, weight: .bold))
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.trailing, 7)
+                    .accessibilityHidden(true)
             }
             .font(.system(size: 9.5, weight: .semibold, design: .rounded))
             .foregroundStyle(controlForeground)
             .frame(width: triggerWidth, height: controlHeight)
-            .contentShape(Capsule(style: .continuous))
+            .contentShape(triggerShape)
         }
         .buttonStyle(IslandPressButtonStyle())
         .help("选择统计时间范围")
