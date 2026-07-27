@@ -94,6 +94,33 @@ New events should use this shape:
 - Rollback:
 ```
 
+### 2026-07-27 - tasks-top-anchor-and-aligned-data-range-drawer
+- Reason: Expanding a Tasks child-agent group temporarily moved the entire
+  island downward, while the Data time-range drawer was wider than its closed
+  trigger, overhung to the left, and shifted option labels away from center.
+- Changed:
+  - `Sources/DynamicIsland/Views/IslandOverlayView.swift`
+  - `Sources/DynamicIsland/Views/DataPrimaryContentView.swift`
+  - `Tests/DynamicIslandCoreChecks/main.swift`
+  - the 2026-07-27 top-anchor/Data-drawer design and implementation documents
+- Result: The fixed island canvas now fills its HostingView and stays
+  top-leading during adaptive Tasks height changes. The Data trigger remains a
+  72x24pt closed Liquid Glass control, and both native and fallback drawers use
+  the same 72pt column. Range labels are geometrically centered while the
+  selected checkmark is an independent leading overlay.
+- Verify: The new source contracts were observed failing before implementation.
+  `swift run DynamicIslandCoreChecks`, `swift build --product DynamicIsland`,
+  `./script/build_and_run.sh`, and `git diff --check` passed. Running-app checks
+  confirmed the Data drawer alignment, centered labels, selection close
+  behavior, and a live Tasks child disclosure. Ten settled CPU samples showed
+  no sustained high usage. The user subsequently confirmed both reported
+  visual problems were fixed.
+- Rollback: Remove the outer HostingView-sized top-leading frame and restore the
+  separate 104pt drawer plus leading HStack only if the former whole-island
+  displacement and left drawer overhang are deliberately accepted. Preserve
+  the closed trigger, Liquid Glass material, transition, and existing hover
+  performance fixes.
+
 ### 2026-07-27 - cold-first-hover-click-hitch-removal
 - Reason: On the first launch of a process, the first hover followed by a click
   produced a visible expansion hitch.
