@@ -6,9 +6,10 @@ public struct IslandPrimaryContentLayout: Equatable, Sendable {
     public let tasksContentFrame: CGRect
     public let filesContentFrame: CGRect
 
-    public init(metrics: NotchMetrics) {
+    public init(metrics: NotchMetrics, shellHeight: CGFloat? = nil) {
+        let resolvedShellHeight = max(metrics.openHeight, shellHeight ?? metrics.openHeight)
         shellWidth = metrics.openWidth
-        shellHeight = metrics.openHeight
+        self.shellHeight = resolvedShellHeight
 
         let contentTopInset = CGFloat(8)
         let topY = metrics.closedHeight + contentTopInset
@@ -19,13 +20,13 @@ public struct IslandPrimaryContentLayout: Equatable, Sendable {
             x: horizontalInset,
             y: topY,
             width: contentWidth,
-            height: max(1, metrics.openHeight - topY - bottomInset)
+            height: max(1, resolvedShellHeight - topY - bottomInset)
         )
         filesContentFrame = CGRect(
             x: horizontalInset,
             y: topY,
             width: contentWidth,
-            height: max(1, metrics.openHeight - topY - contentTopInset)
+            height: max(1, resolvedShellHeight - topY - contentTopInset)
         )
     }
 }

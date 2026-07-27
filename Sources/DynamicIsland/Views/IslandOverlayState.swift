@@ -45,7 +45,11 @@ final class IslandOverlayState: ObservableObject {
     @Published var calibrationHasCameraHousing = false
     @Published var isTopBandEnergyEffectEnabled = false
     @Published var codexStatusBarSnapshot: CodexStatusBarSnapshot = .unavailable
+    @Published var selectedCodexTaskID: String?
+    @Published var codexApprovalPresentation: CodexApprovalPresentation = .hidden
+    @Published var isCodexApprovalAttachmentPresented = false
     @Published var dismissedCodexTaskKeys: Set<String> = []
+    @Published var codexTasksDetailExpansionHeight: CGFloat = 0
     @Published var musicPlayback: MusicPlaybackSnapshot = .idle
     @Published var temporaryFileShelf = TemporaryFileShelf()
     @Published var temporaryFileShelfSelectedItemIDs: Set<TemporaryShelfItem.ID> = []
@@ -56,4 +60,6 @@ final class IslandOverlayState: ObservableObject {
     @Published var isFileDropTargetActive = false
     @Published var filesDisplayMode: FilesDisplayMode = .pinned
     @Published var selectedPrimaryFeature: IslandPrimaryFeature = .tasks
+    @Published var dataUsageTimeRange: UsageTimeRange = .today
+    @Published var dataUsagePresentation: UsagePresentationState = .idle
 }

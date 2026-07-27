@@ -7,6 +7,7 @@ struct FilesPrimaryContentView: View {
     let selectedItemIDs: Set<TemporaryShelfItem.ID>
     let airDropUndoItemCount: Int
     let isDropTargetActive: Bool
+    let isActive: Bool
     let displayMode: FilesDisplayMode
     let onAirDrop: ([TemporaryShelfItem.ID]) -> Void
     let onUndoAirDrop: () -> Void
@@ -18,6 +19,7 @@ struct FilesPrimaryContentView: View {
 
     @State private var isAirDropTargeted = false
     @State private var isMultiSelectionEnabled = false
+    @State private var iconCache = FilesPrimaryIconCache()
 
     private let maximumAirDropZoneWidth: CGFloat = 220
     private let minimumAirDropZoneWidth: CGFloat = 150
@@ -81,6 +83,7 @@ struct FilesPrimaryContentView: View {
             FilesAirDropTargetView(
                 items: shelf.items,
                 selectedItemIDs: selectedItemIDs,
+                isActive: isActive,
                 onAirDrop: onAirDrop,
                 onTargetedChange: { isAirDropTargeted = $0 }
             )
@@ -114,7 +117,7 @@ struct FilesPrimaryContentView: View {
                         .offset(x: 5, y: -5)
                 }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandPressButtonStyle())
             .foregroundStyle(.white.opacity(0.9))
             .padding(4)
             .background(
@@ -237,7 +240,7 @@ struct FilesPrimaryContentView: View {
     }
 
     private func fileTileArtwork(for item: TemporaryShelfItem) -> some View {
-        Image(nsImage: NSWorkspace.shared.icon(forFile: item.fileURL.path))
+        Image(nsImage: iconCache.icon(for: item))
             .resizable()
             .scaledToFit()
     }
@@ -270,6 +273,21 @@ struct FilesPrimaryContentView: View {
                         style: StrokeStyle(lineWidth: 1, dash: [5, 5])
                     )
             )
+    }
+}
+
+@MainActor
+private final class FilesPrimaryIconCache {
+    private var imagesByItemID: [TemporaryShelfItem.ID: NSImage] = [:]
+
+    func icon(for item: TemporaryShelfItem) -> NSImage {
+        if let image = imagesByItemID[item.id] {
+            return image
+        }
+
+        let image = NSWorkspace.shared.icon(forFile: item.fileURL.path)
+        imagesByItemID[item.id] = image
+        return image
     }
 }
 
@@ -309,7 +327,7 @@ private struct FilesMultiSelectionButton: View {
                     .fill(.white.opacity(isActive ? 0.16 : 0))
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(IslandPressButtonStyle())
         .disabled(!isEnabled)
         .help(isActive ? "关闭多选" : "多选文件")
         .accessibilityLabel(isActive ? "Disable multiple selection" : "Enable multiple selection")
@@ -354,7 +372,7 @@ private struct FilesDeleteSelectionButton: View {
                     .fill(.white.opacity(isEnabled ? 0.14 : 0))
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(IslandPressButtonStyle())
         .disabled(!isEnabled)
         .help(isEnabled ? "删除选中文件" : "先选择文件")
         .accessibilityLabel("Delete selected files")
@@ -384,7 +402,7 @@ private struct FilesDisplayModeControl: View {
                                 .fill(.white.opacity(mode == option ? 0.16 : 0))
                         )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandPressButtonStyle())
                 .help(option.accessibilityLabel)
                 .accessibilityLabel(option.accessibilityLabel)
             }
@@ -400,6 +418,7 @@ private struct FilesDisplayModeControl: View {
 private struct FilesAirDropTargetView: NSViewRepresentable {
     let items: [TemporaryShelfItem]
     let selectedItemIDs: Set<TemporaryShelfItem.ID>
+    let isActive: Bool
     let onAirDrop: ([TemporaryShelfItem.ID]) -> Void
     let onTargetedChange: (Bool) -> Void
 
@@ -410,6 +429,7 @@ private struct FilesAirDropTargetView: NSViewRepresentable {
     func updateNSView(_ nsView: FilesAirDropTargetNSView, context: Context) {
         nsView.items = items
         nsView.selectedItemIDs = selectedItemIDs
+        nsView.setActive(isActive)
         nsView.onAirDrop = onAirDrop
         nsView.onTargetedChange = onTargetedChange
     }
@@ -423,6 +443,8 @@ private final class FilesAirDropTargetNSView: NSView {
 
     private var mouseDownLocation: NSPoint?
     private var isTargeted = false
+    private var isActive = false
+    private var activeDragItemIDs: [TemporaryShelfItem.ID] = []
 
     override var isFlipped: Bool {
         true
@@ -430,7 +452,13 @@ private final class FilesAirDropTargetNSView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        registerForDraggedTypes([.fileURL])
+        syncDragRegistration()
+    }
+
+    func setActive(_ active: Bool) {
+        guard isActive != active else { return }
+        isActive = active
+        syncDragRegistration()
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -449,12 +477,13 @@ private final class FilesAirDropTargetNSView: NSView {
     }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        draggingUpdated(sender)
+        guard isActive else { return [] }
+        activeDragItemIDs = matchedItemIDs(from: sender.draggingPasteboard.filesPrimaryFileURLs)
+        return draggingUpdated(sender)
     }
 
     override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        let itemIDs = matchedItemIDs(from: sender.draggingPasteboard.filesPrimaryFileURLs)
-        guard !itemIDs.isEmpty else {
+        guard isActive, !activeDragItemIDs.isEmpty else {
             setTargeted(false)
             return []
         }
@@ -464,22 +493,35 @@ private final class FilesAirDropTargetNSView: NSView {
     }
 
     override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+        activeDragItemIDs = []
         setTargeted(false)
     }
 
     override func draggingEnded(_ sender: any NSDraggingInfo) {
+        activeDragItemIDs = []
         setTargeted(false)
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        let itemIDs = matchedItemIDs(from: sender.draggingPasteboard.filesPrimaryFileURLs)
-        guard !itemIDs.isEmpty else {
+        guard isActive else {
+            activeDragItemIDs = []
             setTargeted(false)
             return false
         }
 
+        let itemIDs = activeDragItemIDs.isEmpty
+            ? matchedItemIDs(from: sender.draggingPasteboard.filesPrimaryFileURLs)
+            : activeDragItemIDs
+        defer {
+            activeDragItemIDs = []
+            setTargeted(false)
+        }
+
+        guard !itemIDs.isEmpty else {
+            return false
+        }
+
         onAirDrop?(itemIDs)
-        setTargeted(false)
         return true
     }
 
@@ -493,6 +535,16 @@ private final class FilesAirDropTargetNSView: NSView {
         let draggedFileIDs = Set(fileURLs.map { $0.standardizedFileURL.path })
         guard !draggedFileIDs.isEmpty else { return [] }
         return items.filter { draggedFileIDs.contains($0.id) }.map(\.id)
+    }
+
+    private func syncDragRegistration() {
+        guard isActive, window != nil else {
+            unregisterDraggedTypes()
+            activeDragItemIDs = []
+            setTargeted(false)
+            return
+        }
+        registerForDraggedTypes([.fileURL])
     }
 
     private func setTargeted(_ targeted: Bool) {
@@ -560,18 +612,23 @@ private final class FilesPrimaryDragSourceNSView: NSView, NSDraggingSource {
         activeDragItemIDs = draggedItems.map(\.id)
         onDragStarted?(activeDragItemIDs)
 
+        let dragImageSize = NSSize(width: 28, height: 28)
+        let dragImageOrigin = NSPoint(
+            x: currentLocation.x - (dragImageSize.width / 2),
+            y: currentLocation.y - (dragImageSize.height / 2)
+        )
         let dragIcon = NSWorkspace.shared.icon(forFile: draggedItems.first?.fileURL.path ?? item.fileURL.path)
-        dragIcon.size = NSSize(width: 28, height: 28)
+        dragIcon.size = dragImageSize
 
         let draggingItems = draggedItems.enumerated().map { index, shelfItem in
             let draggingItem = NSDraggingItem(pasteboardWriter: shelfItem.fileURL as NSURL)
             let offset = CGFloat(index) * 3
             draggingItem.setDraggingFrame(
                 NSRect(
-                    x: bounds.midX - 14 + offset,
-                    y: bounds.midY - 14 - offset,
-                    width: 28,
-                    height: 28
+                    x: dragImageOrigin.x + offset,
+                    y: dragImageOrigin.y - offset,
+                    width: dragImageSize.width,
+                    height: dragImageSize.height
                 ),
                 contents: dragIcon
             )

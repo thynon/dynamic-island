@@ -27,6 +27,7 @@ struct FileShelfOverlayView: View {
     @State private var tileFrames: [TemporaryShelfItem.ID: CGRect] = [:]
     @State private var selectionStartPoint: CGPoint?
     @State private var selectionCurrentPoint: CGPoint?
+    @State private var iconCache = TemporaryFileIconCache()
 
     private let columns = [
         GridItem(.adaptive(minimum: 112, maximum: 150), spacing: 6)
@@ -96,7 +97,7 @@ struct FileShelfOverlayView: View {
                             .fill(.white.opacity(0.1))
                     )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandPressButtonStyle())
             .accessibilityLabel("Done")
             if shelf.hasItems {
                 Button(action: onClear) {
@@ -109,7 +110,7 @@ struct FileShelfOverlayView: View {
                                 .fill(.white.opacity(0.1))
                         )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandPressButtonStyle())
                 .contentShape(Rectangle())
                 .accessibilityLabel("Clear temporary files")
             }
@@ -133,7 +134,7 @@ struct FileShelfOverlayView: View {
                                 .fill(.white.opacity(filter == filterOption ? 0.16 : 0.06))
                         )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(IslandPressButtonStyle())
             }
             Spacer(minLength: 0)
         }
@@ -254,7 +255,7 @@ struct FileShelfOverlayView: View {
         let isSelected = selectedItemIDs.contains(item.id)
 
         return HStack(spacing: 5) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: item.fileURL.path))
+            Image(nsImage: iconCache.icon(for: item))
                 .resizable()
                 .scaledToFit()
                 .frame(width: 18, height: 18)
@@ -280,7 +281,7 @@ struct FileShelfOverlayView: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 8, weight: .bold))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(IslandPressButtonStyle())
             .frame(width: 16, height: 18)
             .contentShape(Rectangle())
             .accessibilityLabel("Remove \(item.displayName)")
@@ -317,6 +318,21 @@ struct FileShelfOverlayView: View {
                 )
             }
         )
+    }
+}
+
+@MainActor
+private final class TemporaryFileIconCache {
+    private var imagesByItemID: [TemporaryShelfItem.ID: NSImage] = [:]
+
+    func icon(for item: TemporaryShelfItem) -> NSImage {
+        if let image = imagesByItemID[item.id] {
+            return image
+        }
+
+        let image = NSWorkspace.shared.icon(forFile: item.fileURL.path)
+        imagesByItemID[item.id] = image
+        return image
     }
 }
 
@@ -383,20 +399,25 @@ private final class TemporaryFileDragSourceNSView: NSView, NSDraggingSource {
         activeDragItemIDs = draggedItems.map(\.id)
         onDragStarted?(activeDragItemIDs)
 
+        let dragImageSize = NSSize(width: 32, height: 32)
+        let dragImageOrigin = NSPoint(
+            x: currentLocation.x - (dragImageSize.width / 2),
+            y: currentLocation.y - (dragImageSize.height / 2)
+        )
+        let dragIcon = NSWorkspace.shared.icon(forFile: draggedItems.first?.fileURL.path ?? item.fileURL.path)
+        dragIcon.size = dragImageSize
+
         let draggingItems = draggedItems.enumerated().map { index, shelfItem in
             let draggingItem = NSDraggingItem(pasteboardWriter: shelfItem.fileURL as NSURL)
-            let icon = NSWorkspace.shared.icon(forFile: shelfItem.fileURL.path)
-            icon.size = NSSize(width: 32, height: 32)
-
             let offset = CGFloat(index) * 3
             draggingItem.setDraggingFrame(
                 NSRect(
-                    x: bounds.midX - 16 + offset,
-                    y: bounds.midY - 16 - offset,
-                    width: 32,
-                    height: 32
+                    x: dragImageOrigin.x + offset,
+                    y: dragImageOrigin.y - offset,
+                    width: dragImageSize.width,
+                    height: dragImageSize.height
                 ),
-                contents: icon
+                contents: dragIcon
             )
             return draggingItem
         }

@@ -14,9 +14,18 @@ public struct CodexTaskStatus: Equatable, Identifiable, Sendable {
             case .none:
                 ""
             case .autoReviewing:
-                "审查"
+                "审查中"
             case .pending, .pendingCommand, .pendingFileChange, .pendingPermissions:
                 "待审"
+            }
+        }
+
+        public var requiresManualApproval: Bool {
+            switch self {
+            case .pending, .pendingCommand, .pendingFileChange, .pendingPermissions:
+                true
+            case .none, .autoReviewing:
+                false
             }
         }
 
@@ -48,8 +57,13 @@ public struct CodexTaskStatus: Equatable, Identifiable, Sendable {
     public let totalTokens: Int
     public let activityState: CodexStatusBarSnapshot.ActivityState
     public let approvalState: ApprovalState
+    public let parentThreadID: String?
+    public let rootThreadID: String?
+    public let agentNickname: String?
+    public let agentDepth: Int
     public let turnID: String?
     public let completedAt: TimeInterval?
+    public let progressEvents: [CodexSessionProgressEvent]
 
     public init(
         id: String,
@@ -58,8 +72,13 @@ public struct CodexTaskStatus: Equatable, Identifiable, Sendable {
         totalTokens: Int = 0,
         activityState: CodexStatusBarSnapshot.ActivityState = .unavailable,
         approvalState: ApprovalState = .none,
+        parentThreadID: String? = nil,
+        rootThreadID: String? = nil,
+        agentNickname: String? = nil,
+        agentDepth: Int = 0,
         turnID: String? = nil,
-        completedAt: TimeInterval? = nil
+        completedAt: TimeInterval? = nil,
+        progressEvents: [CodexSessionProgressEvent] = []
     ) {
         self.id = id
         self.title = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -69,8 +88,14 @@ public struct CodexTaskStatus: Equatable, Identifiable, Sendable {
         self.totalTokens = max(0, totalTokens)
         self.activityState = activityState
         self.approvalState = approvalState
+        self.parentThreadID = parentThreadID
+        self.rootThreadID = rootThreadID
+        let resolvedAgentNickname = agentNickname?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.agentNickname = resolvedAgentNickname?.isEmpty == false ? resolvedAgentNickname : nil
+        self.agentDepth = max(0, agentDepth)
         self.turnID = turnID
         self.completedAt = completedAt
+        self.progressEvents = progressEvents
     }
 
     public var formattedElapsedTime: String {
@@ -79,6 +104,15 @@ public struct CodexTaskStatus: Equatable, Identifiable, Sendable {
 
     public var formattedTokenCount: String {
         CodexStatusBarSnapshot.formatTokenCount(totalTokens)
+    }
+
+    public var isSubagent: Bool {
+        parentThreadID != nil
+    }
+
+    public var agentDisplayName: String {
+        guard isSubagent else { return title }
+        return agentNickname ?? "子代理"
     }
 
     public var dismissalKey: String {

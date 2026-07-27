@@ -12,6 +12,7 @@ final class IslandTrackingHostingView: NSHostingView<IslandOverlayView> {
     var onFileDropTargetedChange: ((Bool) -> Void)?
 
     private var trackingArea: NSTrackingArea?
+    private var activeDragFileURLs: [URL] = []
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -52,12 +53,13 @@ final class IslandTrackingHostingView: NSHostingView<IslandOverlayView> {
     }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        draggingUpdated(sender)
+        activeDragFileURLs = sender.draggingPasteboard.fileURLs
+        return draggingUpdated(sender)
     }
 
     override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
         guard
-            !sender.draggingPasteboard.fileURLs.isEmpty,
+            !activeDragFileURLs.isEmpty,
             canAcceptFileDrop?(sender.draggingLocation) == true
         else {
             onFileDropTargetedChange?(false)
@@ -69,22 +71,29 @@ final class IslandTrackingHostingView: NSHostingView<IslandOverlayView> {
     }
 
     override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+        activeDragFileURLs = []
         onFileDropTargetedChange?(false)
     }
 
     override func draggingEnded(_ sender: any NSDraggingInfo) {
+        activeDragFileURLs = []
         onFileDropTargetedChange?(false)
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        let fileURLs = sender.draggingPasteboard.fileURLs
-        guard !fileURLs.isEmpty, canAcceptFileDrop?(sender.draggingLocation) == true else {
+        let fileURLs = activeDragFileURLs.isEmpty
+            ? sender.draggingPasteboard.fileURLs
+            : activeDragFileURLs
+        defer {
+            activeDragFileURLs = []
             onFileDropTargetedChange?(false)
+        }
+
+        guard !fileURLs.isEmpty, canAcceptFileDrop?(sender.draggingLocation) == true else {
             return false
         }
 
         onFileDrop?(fileURLs, sender.draggingLocation)
-        onFileDropTargetedChange?(false)
         return true
     }
 
