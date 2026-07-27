@@ -482,6 +482,7 @@ struct IslandOverlayView: View {
             primaryFeatureCanvasLayer
         }
         .frame(width: canvasWidth, height: canvasHeight, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var islandShell: some View {

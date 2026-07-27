@@ -1630,6 +1630,13 @@ private func testTemporaryFileShelfExpandedDropIntegration() {
     expectEqual(overlay.contains("private var primaryFeatureCanvasLayer: some View"), true, "top-band primary controls share one stable open-canvas coordinate layer")
     expectEqual(overlay.contains("private var primaryFeatureCanvasMask: some View"), true, "the stable primary layer remains visually clipped to the animated shell")
     expectEqual(overlay.contains("primaryFeatureCanvasLayer\n        }\n        .frame(width: canvasWidth, height: canvasHeight, alignment: .topLeading)"), true, "the stable primary layer is mounted above the animated shell in the same canvas")
+    expectEqual(
+        overlay.contains(
+            ".frame(width: canvasWidth, height: canvasHeight, alignment: .topLeading)\n        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)"
+        ),
+        true,
+        "the animated canvas fills its HostingView and remains pinned to the screen top during Tasks height changes"
+    )
     expectEqual(overlay.contains(".frame(width: canvasWidth, height: metrics.expandedTopStatusBandLayout.bandHeight, alignment: .topLeading)"), true, "the primary layer uses the canonical top-band height without changing layout frames")
     expectEqual(overlay.contains(".animation(isExpanded ? expandAnimation : collapseAnimation, value: shellWidth)"), true, "the primary layer mask follows the shell geometry on expansion and collapse")
     expectEqual(overlay.contains(".mask {\n            primaryFeatureCanvasMask\n        }"), true, "the primary controls cannot float outside the collapsing shell")
