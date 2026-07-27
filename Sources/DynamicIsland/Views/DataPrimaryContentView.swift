@@ -19,6 +19,8 @@ struct DataPrimaryContentView: View {
     private let drawerWidth: CGFloat = 104
     private let triggerWidth: CGFloat = 72
     private let controlHeight: CGFloat = 24
+    private let controlSpacing: CGFloat = 6
+    private let drawerGap: CGFloat = 5
 
     private var drawerShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -293,64 +295,45 @@ struct DataPrimaryContentView: View {
     @available(macOS 26.0, *)
     private var nativeLiquidGlassControls: some View {
         GlassEffectContainer(spacing: 0) {
-            HStack(alignment: .top, spacing: 6) {
-                ZStack(alignment: .topTrailing) {
-                    if isTimeRangeDrawerPresented {
-                        timeRangeDrawerContent
-                            .padding(4)
-                            .frame(width: drawerWidth)
-                            .glassEffect(.regular.interactive(), in: drawerShape)
-                            .glassEffectID(DataGlassEffectID.drawer, in: glassNamespace)
-                            .glassEffectTransition(accessibilityReduceMotion ? .identity : .matchedGeometry)
-                            .transition(accessibilityReduceMotion ? .opacity : .identity)
-                    } else {
-                        timeRangeTrigger
-                            .glassEffect(.regular.interactive(), in: Capsule(style: .continuous))
-                            .glassEffectID(DataGlassEffectID.trigger, in: glassNamespace)
-                            .glassEffectTransition(accessibilityReduceMotion ? .identity : .matchedGeometry)
-                            .transition(accessibilityReduceMotion ? .opacity : .identity)
-                    }
-                }
-                .frame(width: triggerWidth, height: controlHeight, alignment: .topTrailing)
+            HStack(alignment: .top, spacing: controlSpacing) {
+                timeRangeTrigger
+                    .glassEffect(.regular.interactive(), in: Capsule(style: .continuous))
+                    .glassEffectID(DataGlassEffectID.trigger, in: glassNamespace)
 
                 refreshButton
                     .glassEffect(.regular.interactive(), in: Circle())
                     .glassEffectID(DataGlassEffectID.refresh, in: glassNamespace)
+            }
+            .overlay(alignment: .topTrailing) {
+                if isTimeRangeDrawerPresented {
+                    timeRangeDrawerContent
+                        .padding(4)
+                        .frame(width: drawerWidth)
+                        .glassEffect(.regular.interactive(), in: drawerShape)
+                        .glassEffectID(DataGlassEffectID.drawer, in: glassNamespace)
+                        .glassEffectTransition(accessibilityReduceMotion ? .identity : .materialize)
+                        .transition(accessibilityReduceMotion ? .opacity : .identity)
+                        .offset(
+                            x: -(controlHeight + controlSpacing),
+                            y: controlHeight + drawerGap
+                        )
+                }
             }
         }
     }
     #endif
 
     private var fallbackControls: some View {
-        HStack(alignment: .top, spacing: 6) {
-            ZStack(alignment: .topTrailing) {
-                if isTimeRangeDrawerPresented {
-                    timeRangeDrawerContent
-                        .padding(4)
-                        .frame(width: drawerWidth)
-                        .background {
-                            fallbackBackground(drawerShape)
-                        }
-                        .overlay(
-                            drawerShape
-                                .stroke(fallbackStrokeColor, lineWidth: colorSchemeContrast == .increased ? 1 : 0.7)
-                        )
-                        .shadow(color: .black.opacity(0.32), radius: 8, y: 4)
-                        .transition(drawerTransition)
-                } else {
-                    timeRangeTrigger
-                        .background {
-                            fallbackBackground(Capsule(style: .continuous))
-                        }
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .stroke(fallbackStrokeColor, lineWidth: colorSchemeContrast == .increased ? 1 : 0.7)
-                        )
-                        .shadow(color: .black.opacity(0.24), radius: 4, y: 2)
-                        .transition(drawerTransition)
+        HStack(alignment: .top, spacing: controlSpacing) {
+            timeRangeTrigger
+                .background {
+                    fallbackBackground(Capsule(style: .continuous))
                 }
-            }
-            .frame(width: triggerWidth, height: controlHeight, alignment: .topTrailing)
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(fallbackStrokeColor, lineWidth: colorSchemeContrast == .increased ? 1 : 0.7)
+                )
+                .shadow(color: .black.opacity(0.24), radius: 4, y: 2)
 
             refreshButton
                 .background {
@@ -361,6 +344,26 @@ struct DataPrimaryContentView: View {
                         .stroke(fallbackStrokeColor, lineWidth: colorSchemeContrast == .increased ? 1 : 0.7)
                 )
                 .shadow(color: .black.opacity(0.24), radius: 4, y: 2)
+        }
+        .overlay(alignment: .topTrailing) {
+            if isTimeRangeDrawerPresented {
+                timeRangeDrawerContent
+                    .padding(4)
+                    .frame(width: drawerWidth)
+                    .background {
+                        fallbackBackground(drawerShape)
+                    }
+                    .overlay(
+                        drawerShape
+                            .stroke(fallbackStrokeColor, lineWidth: colorSchemeContrast == .increased ? 1 : 0.7)
+                    )
+                    .shadow(color: .black.opacity(0.32), radius: 8, y: 4)
+                    .transition(drawerTransition)
+                    .offset(
+                        x: -(controlHeight + controlSpacing),
+                        y: controlHeight + drawerGap
+                    )
+            }
         }
     }
 
@@ -443,10 +446,6 @@ struct DataPrimaryContentView: View {
             )
             .padding(.horizontal, 5)
             .frame(height: controlHeight)
-            .background(
-                Color.white.opacity(range == selectedTimeRange ? 0.09 : 0),
-                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-            )
             .contentShape(Rectangle())
         }
         .buttonStyle(IslandPressButtonStyle())

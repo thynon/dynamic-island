@@ -2390,6 +2390,21 @@ private func testDataPrimaryContentViewContracts() {
         from: "private var timeRangeDrawerContent: some View",
         until: "private func timeRangeOption"
     )
+    let nativeControlsSection = sourceSlice(
+        dataView,
+        from: "private var nativeLiquidGlassControls: some View",
+        until: "    #endif"
+    )
+    let fallbackControlsSection = sourceSlice(
+        dataView,
+        from: "private var fallbackControls: some View",
+        until: "    @ViewBuilder\n    private func fallbackBackground"
+    )
+    let optionSection = sourceSlice(
+        dataView,
+        from: "private func timeRangeOption",
+        until: "    @MainActor\n    private func selectTimeRange"
+    )
     let partialStateSection = sourceSlice(
         dataView,
         from: "private var isPartial: Bool",
@@ -2492,8 +2507,76 @@ private func testDataPrimaryContentViewContracts() {
     expectEqual(dataView.contains("glassEffectID(DataGlassEffectID.trigger"), true, "time trigger owns a unique glass identity")
     expectEqual(dataView.contains("glassEffectID(DataGlassEffectID.drawer"), true, "time drawer owns a unique glass identity")
     expectEqual(dataView.contains("glassEffectID(DataGlassEffectID.refresh"), true, "refresh owns a unique glass identity")
-    expectEqual(dataView.contains(".glassEffectTransition(accessibilityReduceMotion ? .identity : .matchedGeometry)"), true, "Reduce Motion replaces matched glass morphing with identity")
-    expectEqual(dataView.contains("matchedGeometryEffect"), false, "Data does not substitute the traditional matched-geometry modifier")
+    expectEqual(dataView.contains("private let controlSpacing: CGFloat = 6"), true, "Data centralizes control spacing")
+    expectEqual(dataView.contains("private let drawerGap: CGFloat = 5"), true, "Data keeps the approved 5pt trigger-to-menu gap")
+    expectEqual(
+        markersAppearInOrder(
+            [
+                "timeRangeTrigger",
+                ".glassEffect(.regular.interactive(), in: Capsule",
+                "if isTimeRangeDrawerPresented {",
+                "timeRangeDrawerContent"
+            ],
+            in: nativeControlsSection
+        ),
+        true,
+        "native trigger remains mounted before the conditional drawer"
+    )
+    expectEqual(
+        nativeControlsSection.contains(
+            ".glassEffectTransition(accessibilityReduceMotion ? .identity : .materialize)"
+        ),
+        true,
+        "native drawer materializes independently and Reduce Motion disables the glass transition"
+    )
+    expectEqual(
+        nativeControlsSection.contains(
+            ".transition(accessibilityReduceMotion ? .opacity : .identity)"
+        ),
+        true,
+        "Reduce Motion keeps only the parent-owned opacity transition"
+    )
+    expectEqual(nativeControlsSection.contains(".matchedGeometry"), false, "Data no longer morphs the trigger into the drawer")
+    expectEqual(nativeControlsSection.contains("matchedGeometryEffect"), false, "Data does not use traditional matched geometry")
+    expectEqual(nativeControlsSection.contains(".overlay(alignment: .topTrailing)"), true, "native drawer is a layout-neutral overlay")
+    expectEqual(nativeControlsSection.components(separatedBy: ".glassEffect(").count - 1, 3, "native controls own exactly trigger, refresh, and one drawer glass surface")
+    expectEqual(nativeControlsSection.contains(".background"), false, "native controls do not place a background beneath Liquid Glass")
+    expectEqual(nativeControlsSection.contains(".fill("), false, "native controls do not place a fill beneath Liquid Glass")
+    expectEqual(nativeControlsSection.contains(".thinMaterial"), false, "native controls do not stack fallback Material")
+    expectEqual(
+        markersAppearInOrder(
+            [
+                ".offset(",
+                "x: -(controlHeight + controlSpacing)",
+                "y: controlHeight + drawerGap"
+            ],
+            in: nativeControlsSection
+        ),
+        true,
+        "native drawer aligns below the trigger rather than replacing it"
+    )
+    expectEqual(
+        markersAppearInOrder(
+            ["timeRangeTrigger", "if isTimeRangeDrawerPresented {", "timeRangeDrawerContent"],
+            in: fallbackControlsSection
+        ),
+        true,
+        "fallback trigger also remains mounted before the conditional drawer"
+    )
+    expectEqual(fallbackControlsSection.contains(".overlay(alignment: .topTrailing)"), true, "fallback drawer is also a layout-neutral overlay")
+    expectEqual(
+        markersAppearInOrder(
+            [
+                ".offset(",
+                "x: -(controlHeight + controlSpacing)",
+                "y: controlHeight + drawerGap"
+            ],
+            in: fallbackControlsSection
+        ),
+        true,
+        "fallback drawer shares the approved independent alignment"
+    )
+    expectEqual(optionSection.contains("Color.white.opacity"), false, "selected range has no persistent white row background")
     expectEqual(drawerContentSection.contains("glassEffect"), false, "drawer option rows do not stack a second glass layer")
 
     expectEqual(dataView.contains(".fill(.thinMaterial)"), true, "macOS 14 and 15 receive a system-material fallback")
