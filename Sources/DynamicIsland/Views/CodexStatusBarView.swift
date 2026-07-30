@@ -274,18 +274,20 @@ struct CodexStatusBarView: View {
 
 @MainActor
 private struct CodexApplicationIconView: View {
-    private static let appIcon: NSImage? = {
+    private static let appIconTask = Task.detached(priority: .utility) { () -> NSImage? in
         guard let applicationURL = NSWorkspace.shared.urlForApplication(
             withBundleIdentifier: "com.openai.codex"
         ) else {
             return nil
         }
         return NSWorkspace.shared.icon(forFile: applicationURL.path)
-    }()
+    }
+
+    @State private var appIcon: NSImage?
 
     var body: some View {
         Group {
-            if let appIcon = Self.appIcon {
+            if let appIcon {
                 Image(nsImage: appIcon)
                     .resizable()
                     .interpolation(.high)
@@ -298,6 +300,9 @@ private struct CodexApplicationIconView: View {
         .foregroundStyle(.white.opacity(0.9))
         .frame(width: 14, height: 14)
         .accessibilityHidden(true)
+        .task {
+            appIcon = await Self.appIconTask.value
+        }
     }
 }
 

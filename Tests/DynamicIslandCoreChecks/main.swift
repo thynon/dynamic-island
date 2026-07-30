@@ -970,6 +970,9 @@ private func testCodexStatusBarContracts() {
     expectEqual(statusBarView.contains("CodexStatusBarSnapshot.formatTokenCount(totalTokens)"), true, "Codex summary formats the focused cumulative token total")
     expectEqual(statusBarView.contains("task?.agentDisplayName"), true, "focused subagents use their Codex nickname instead of repeated task instructions")
     expectEqual(statusBarView.contains("com.openai.codex"), true, "Codex identity resolves the installed app icon by bundle identifier")
+    expectEqual(statusBarView.contains("private static let appIconTask"), true, "Codex app icon lookup starts outside the first Tasks render transaction")
+    expectEqual(statusBarView.contains("Task.detached(priority: .utility)"), true, "Codex app icon LaunchServices work stays off the interaction-critical main thread")
+    expectEqual(statusBarView.contains("private static let appIcon: NSImage?"), false, "Codex app icon is not synchronously initialized from the first view body")
     expectEqual(statusBarView.contains("terminal.fill"), true, "Codex identity has a local system-symbol fallback")
     expectEqual(statusBarView.contains(".onHover { isInside in"), true, "completed task rows track cursor entry and exit")
     expectEqual(statusBarView.contains("xmark.circle.fill"), true, "completed task rows show a compact corner delete icon")
@@ -1363,6 +1366,11 @@ private func testTemporaryFileShelfExpandedDropIntegration() {
         .first?
         .components(separatedBy: "if isExpanded, state.isFileShelfOverlayVisible")
         .first ?? ""
+    let primaryContentMountSection = sourceSlice(
+        overlay,
+        from: "if isPrimaryContentEntranceActive {",
+        until: "if isDataTimeRangeDrawerPresented {"
+    )
     let fileShelfOverlayMountSection = overlay
         .components(separatedBy: "FileShelfOverlayView(")
         .dropFirst()
@@ -1622,6 +1630,13 @@ private func testTemporaryFileShelfExpandedDropIntegration() {
     expectEqual(overlay.contains("private var primaryFeatureCanvasLayer: some View"), true, "top-band primary controls share one stable open-canvas coordinate layer")
     expectEqual(overlay.contains("private var primaryFeatureCanvasMask: some View"), true, "the stable primary layer remains visually clipped to the animated shell")
     expectEqual(overlay.contains("primaryFeatureCanvasLayer\n        }\n        .frame(width: canvasWidth, height: canvasHeight, alignment: .topLeading)"), true, "the stable primary layer is mounted above the animated shell in the same canvas")
+    expectEqual(
+        overlay.contains(
+            ".frame(width: canvasWidth, height: canvasHeight, alignment: .topLeading)\n        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)"
+        ),
+        true,
+        "the animated canvas fills its HostingView and remains pinned to the screen top during Tasks height changes"
+    )
     expectEqual(overlay.contains(".frame(width: canvasWidth, height: metrics.expandedTopStatusBandLayout.bandHeight, alignment: .topLeading)"), true, "the primary layer uses the canonical top-band height without changing layout frames")
     expectEqual(overlay.contains(".animation(isExpanded ? expandAnimation : collapseAnimation, value: shellWidth)"), true, "the primary layer mask follows the shell geometry on expansion and collapse")
     expectEqual(overlay.contains(".mask {\n            primaryFeatureCanvasMask\n        }"), true, "the primary controls cannot float outside the collapsing shell")
@@ -1642,6 +1657,14 @@ private func testTemporaryFileShelfExpandedDropIntegration() {
     expectEqual(animationProfileSource.contains("primaryContentEntranceDelay: 0.40"), true, "primary content follows the navigation layer after a short visual separation")
     expectEqual(animationProfileSource.contains("primaryContentTransitionDistance: 6"), true, "primary content travels only a restrained six points from its source")
     expectEqual(overlay.contains("@State private var isPrimaryContentEntranceActive = false"), true, "primary content stays absent until the expanded shell is visually stable")
+    expectEqual(overlay.contains("@State private var mountedPrimaryFeatures: [IslandPrimaryFeature] = []"), true, "primary content tracks only features visited during the current expansion")
+    expectEqual(primaryContentMountSection.contains("if mountedPrimaryFeatures.contains(.tasks)"), true, "Tasks mounts lazily on first selection and then stays alive for feature transitions")
+    expectEqual(primaryContentMountSection.contains("if mountedPrimaryFeatures.contains(.files)"), true, "Files mounts lazily and preserves its icon cache while the island remains expanded")
+    expectEqual(primaryContentMountSection.contains("if mountedPrimaryFeatures.contains(.data)"), true, "Data mounts lazily without joining an unrelated cold expansion")
+    expectEqual(primaryContentMountSection.contains("switch state.selectedPrimaryFeature"), false, "feature switching retains visited content for explicit outgoing opacity and layer transitions")
+    expectEqual(overlay.contains("mountPrimaryFeature(state.selectedPrimaryFeature)"), true, "cold entrance mounts only the currently selected primary content")
+    expectEqual(overlay.contains("mountPrimaryFeature(feature)"), true, "selecting an unvisited feature mounts it without discarding previously visited content")
+    expectEqual(overlay.contains("mountedPrimaryFeatures.removeAll()"), true, "a completed collapse releases visited primary content before the next cold entrance")
     expectEqual(overlay.contains("@State private var primaryContentExitDeadline: Date?"), true, "primary content remembers only the active exit window for reversible reopening")
     expectEqual(overlay.contains("private var primaryContentEntranceDelay: TimeInterval"), true, "primary content uses a named entrance delay")
     expectEqual(overlay.contains("accessibilityReduceMotion ? 0 : animationProfile.primaryContentEntranceDelay"), true, "normal content timing comes from the shared profile while Reduce Motion removes the delay")
@@ -2374,6 +2397,21 @@ private func testDataPrimaryContentViewContracts() {
         from: "private var timeRangeDrawerContent: some View",
         until: "private func timeRangeOption"
     )
+    let nativeControlsSection = sourceSlice(
+        dataView,
+        from: "private var nativeLiquidGlassControls: some View",
+        until: "    #endif"
+    )
+    let fallbackControlsSection = sourceSlice(
+        dataView,
+        from: "private var fallbackControls: some View",
+        until: "    @ViewBuilder\n    private func fallbackBackground"
+    )
+    let optionSection = sourceSlice(
+        dataView,
+        from: "private func timeRangeOption",
+        until: "    @MainActor\n    private func selectTimeRange"
+    )
     let partialStateSection = sourceSlice(
         dataView,
         from: "private var isPartial: Bool",
@@ -2436,6 +2474,36 @@ private func testDataPrimaryContentViewContracts() {
     expectEqual(triggerSection.contains("setDrawerPresented(!isTimeRangeDrawerPresented)"), true, "current range trigger only toggles drawer presentation")
     expectEqual(triggerSection.contains("onSelectTimeRange"), false, "opening the drawer does not select a range")
     expectEqual(triggerSection.contains("onRefresh"), false, "opening the drawer does not refresh usage")
+    expectEqual(triggerSection.contains("ZStack"), true, "time trigger overlays its trailing affordance without shifting the centered value")
+    expectEqual(triggerSection.contains(".frame(maxWidth: .infinity, alignment: .center)"), true, "current range is geometrically centered")
+    expectEqual(triggerSection.contains("Image(systemName: \"chevron.up.chevron.down\")"), true, "time trigger uses a fixed up-down selector affordance")
+    expectEqual(triggerSection.contains("isTimeRangeDrawerPresented ? \"chevron.up\" : \"chevron.down\""), false, "time trigger no longer swaps a single chevron")
+    expectEqual(triggerSection.contains(".frame(maxWidth: .infinity, alignment: .trailing)"), true, "double chevron owns the trailing area")
+    expectEqual(triggerSection.contains(".accessibilityHidden(true)"), true, "decorative double chevron is hidden from accessibility")
+    expectEqual(triggerSection.contains("Circle()"), false, "time trigger has no leading circle marker")
+    expectEqual(triggerSection.contains("LinearGradient"), false, "time trigger has no leading color gradient")
+    expectEqual(triggerSection.contains(".contentShape(triggerShape)"), true, "time trigger hit testing follows the closed shape")
+    expectEqual(fallbackControlsSection.contains("fallbackBackground(triggerShape)"), true, "fallback trigger uses the shared closed shape")
+    expectEqual(fallbackControlsSection.contains("triggerShape\n                        .stroke"), true, "fallback trigger stroke uses the shared closed shape")
+    expectEqual(dataView.contains("private let drawerWidth"), false, "Data has no wider drawer constant that can overhang the trigger")
+    expectEqual(nativeControlsSection.contains(".frame(width: triggerWidth)"), true, "native drawer uses the exact trigger width")
+    expectEqual(fallbackControlsSection.contains(".frame(width: triggerWidth)"), true, "fallback drawer uses the exact trigger width")
+    expectEqual(optionSection.contains("ZStack"), true, "range options overlay selection decoration without shifting text")
+    expectEqual(optionSection.contains(".frame(maxWidth: .infinity, alignment: .center)"), true, "every range label is centered in the trigger-width column")
+    expectEqual(
+        markersAppearInOrder(
+            [
+                "Image(systemName: \"checkmark\")",
+                ".frame(maxWidth: .infinity, alignment: .leading)",
+                ".accessibilityHidden(true)"
+            ],
+            in: optionSection
+        ),
+        true,
+        "selected checkmark is a leading accessibility-hidden overlay"
+    )
+    expectEqual(optionSection.contains("HStack(spacing: 5)"), false, "range text is not offset by a horizontal marker layout")
+    expectEqual(optionSection.contains("Color.clear"), false, "unselected ranges do not reserve a fake leading marker")
 
     for forbidden in ["Chart", "LineMark", "AreaMark", "sourceFilter", "modelFilter", "clientFilter", "Timer", "TimelineView", "repeatForever"] {
         expectEqual(dataView.contains(forbidden), false, "Data view omits out-of-scope \(forbidden) behavior")
@@ -2470,14 +2538,84 @@ private func testDataPrimaryContentViewContracts() {
     expectEqual(dataView.contains("#if compiler(>=6.2)"), true, "native Liquid Glass has a compiler availability guard")
     expectEqual(dataView.contains("if #available(macOS 26.0, *), !accessibilityReduceTransparency"), true, "native Liquid Glass also has a runtime and transparency guard")
     expectEqual(dataView.contains("GlassEffectContainer(spacing: 0)"), true, "one zero-spacing glass container owns all Data controls")
-    expectEqual(dataView.contains(".glassEffect(.regular.interactive(), in: Capsule"), true, "time trigger uses interactive capsule glass")
+    expectEqual(dataView.contains("private var triggerShape: RoundedRectangle"), true, "Data centralizes the closed trigger shape")
+    expectEqual(dataView.contains("RoundedRectangle(cornerRadius: 8, style: .continuous)"), true, "time trigger uses the approved 8pt continuous radius")
+    expectEqual(nativeControlsSection.contains(".glassEffect(.regular.interactive(), in: triggerShape)"), true, "time trigger uses interactive closed-shape glass")
     expectEqual(dataView.contains("RoundedRectangle(cornerRadius: 12, style: .continuous)"), true, "drawer and fallback use the approved continuous radius")
     expectEqual(dataView.contains(".glassEffect(.regular.interactive(), in: drawerShape)"), true, "time drawer uses one interactive glass surface")
     expectEqual(dataView.contains("glassEffectID(DataGlassEffectID.trigger"), true, "time trigger owns a unique glass identity")
     expectEqual(dataView.contains("glassEffectID(DataGlassEffectID.drawer"), true, "time drawer owns a unique glass identity")
     expectEqual(dataView.contains("glassEffectID(DataGlassEffectID.refresh"), true, "refresh owns a unique glass identity")
-    expectEqual(dataView.contains(".glassEffectTransition(accessibilityReduceMotion ? .identity : .matchedGeometry)"), true, "Reduce Motion replaces matched glass morphing with identity")
-    expectEqual(dataView.contains("matchedGeometryEffect"), false, "Data does not substitute the traditional matched-geometry modifier")
+    expectEqual(dataView.contains("private let controlSpacing: CGFloat = 6"), true, "Data centralizes control spacing")
+    expectEqual(dataView.contains("private let drawerGap: CGFloat = 5"), true, "Data keeps the approved 5pt trigger-to-menu gap")
+    expectEqual(
+        markersAppearInOrder(
+            [
+                "timeRangeTrigger",
+                ".glassEffect(.regular.interactive(), in: triggerShape)",
+                "if isTimeRangeDrawerPresented {",
+                "timeRangeDrawerContent"
+            ],
+            in: nativeControlsSection
+        ),
+        true,
+        "native trigger remains mounted before the conditional drawer"
+    )
+    expectEqual(
+        nativeControlsSection.contains(
+            ".glassEffectTransition(accessibilityReduceMotion ? .identity : .materialize)"
+        ),
+        true,
+        "native drawer materializes independently and Reduce Motion disables the glass transition"
+    )
+    expectEqual(
+        nativeControlsSection.contains(
+            ".transition(accessibilityReduceMotion ? .opacity : .identity)"
+        ),
+        true,
+        "Reduce Motion keeps only the parent-owned opacity transition"
+    )
+    expectEqual(nativeControlsSection.contains(".matchedGeometry"), false, "Data no longer morphs the trigger into the drawer")
+    expectEqual(nativeControlsSection.contains("matchedGeometryEffect"), false, "Data does not use traditional matched geometry")
+    expectEqual(nativeControlsSection.contains(".overlay(alignment: .topTrailing)"), true, "native drawer is a layout-neutral overlay")
+    expectEqual(nativeControlsSection.components(separatedBy: ".glassEffect(").count - 1, 3, "native controls own exactly trigger, refresh, and one drawer glass surface")
+    expectEqual(nativeControlsSection.contains(".background"), false, "native controls do not place a background beneath Liquid Glass")
+    expectEqual(nativeControlsSection.contains(".fill("), false, "native controls do not place a fill beneath Liquid Glass")
+    expectEqual(nativeControlsSection.contains(".thinMaterial"), false, "native controls do not stack fallback Material")
+    expectEqual(
+        markersAppearInOrder(
+            [
+                ".offset(",
+                "x: -(controlHeight + controlSpacing)",
+                "y: controlHeight + drawerGap"
+            ],
+            in: nativeControlsSection
+        ),
+        true,
+        "native drawer aligns below the trigger rather than replacing it"
+    )
+    expectEqual(
+        markersAppearInOrder(
+            ["timeRangeTrigger", "if isTimeRangeDrawerPresented {", "timeRangeDrawerContent"],
+            in: fallbackControlsSection
+        ),
+        true,
+        "fallback trigger also remains mounted before the conditional drawer"
+    )
+    expectEqual(fallbackControlsSection.contains(".overlay(alignment: .topTrailing)"), true, "fallback drawer is also a layout-neutral overlay")
+    expectEqual(
+        markersAppearInOrder(
+            [
+                ".offset(",
+                "x: -(controlHeight + controlSpacing)",
+                "y: controlHeight + drawerGap"
+            ],
+            in: fallbackControlsSection
+        ),
+        true,
+        "fallback drawer shares the approved independent alignment"
+    )
+    expectEqual(optionSection.contains("Color.white.opacity"), false, "selected range has no persistent white row background")
     expectEqual(drawerContentSection.contains("glassEffect"), false, "drawer option rows do not stack a second glass layer")
 
     expectEqual(dataView.contains(".fill(.thinMaterial)"), true, "macOS 14 and 15 receive a system-material fallback")

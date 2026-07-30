@@ -16,12 +16,17 @@ struct DataPrimaryContentView: View {
     @Namespace private var glassNamespace
 
     private let timeRangeOptions = UsageTimeRange.allCases
-    private let drawerWidth: CGFloat = 104
     private let triggerWidth: CGFloat = 72
     private let controlHeight: CGFloat = 24
+    private let controlSpacing: CGFloat = 6
+    private let drawerGap: CGFloat = 5
 
     private var drawerShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
+    }
+
+    private var triggerShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
     }
 
     private var displayedSnapshot: UsageSnapshot? {
@@ -293,64 +298,45 @@ struct DataPrimaryContentView: View {
     @available(macOS 26.0, *)
     private var nativeLiquidGlassControls: some View {
         GlassEffectContainer(spacing: 0) {
-            HStack(alignment: .top, spacing: 6) {
-                ZStack(alignment: .topTrailing) {
-                    if isTimeRangeDrawerPresented {
-                        timeRangeDrawerContent
-                            .padding(4)
-                            .frame(width: drawerWidth)
-                            .glassEffect(.regular.interactive(), in: drawerShape)
-                            .glassEffectID(DataGlassEffectID.drawer, in: glassNamespace)
-                            .glassEffectTransition(accessibilityReduceMotion ? .identity : .matchedGeometry)
-                            .transition(accessibilityReduceMotion ? .opacity : .identity)
-                    } else {
-                        timeRangeTrigger
-                            .glassEffect(.regular.interactive(), in: Capsule(style: .continuous))
-                            .glassEffectID(DataGlassEffectID.trigger, in: glassNamespace)
-                            .glassEffectTransition(accessibilityReduceMotion ? .identity : .matchedGeometry)
-                            .transition(accessibilityReduceMotion ? .opacity : .identity)
-                    }
-                }
-                .frame(width: triggerWidth, height: controlHeight, alignment: .topTrailing)
+            HStack(alignment: .top, spacing: controlSpacing) {
+                timeRangeTrigger
+                    .glassEffect(.regular.interactive(), in: triggerShape)
+                    .glassEffectID(DataGlassEffectID.trigger, in: glassNamespace)
 
                 refreshButton
                     .glassEffect(.regular.interactive(), in: Circle())
                     .glassEffectID(DataGlassEffectID.refresh, in: glassNamespace)
+            }
+            .overlay(alignment: .topTrailing) {
+                if isTimeRangeDrawerPresented {
+                    timeRangeDrawerContent
+                        .padding(4)
+                        .frame(width: triggerWidth)
+                        .glassEffect(.regular.interactive(), in: drawerShape)
+                        .glassEffectID(DataGlassEffectID.drawer, in: glassNamespace)
+                        .glassEffectTransition(accessibilityReduceMotion ? .identity : .materialize)
+                        .transition(accessibilityReduceMotion ? .opacity : .identity)
+                        .offset(
+                            x: -(controlHeight + controlSpacing),
+                            y: controlHeight + drawerGap
+                        )
+                }
             }
         }
     }
     #endif
 
     private var fallbackControls: some View {
-        HStack(alignment: .top, spacing: 6) {
-            ZStack(alignment: .topTrailing) {
-                if isTimeRangeDrawerPresented {
-                    timeRangeDrawerContent
-                        .padding(4)
-                        .frame(width: drawerWidth)
-                        .background {
-                            fallbackBackground(drawerShape)
-                        }
-                        .overlay(
-                            drawerShape
-                                .stroke(fallbackStrokeColor, lineWidth: colorSchemeContrast == .increased ? 1 : 0.7)
-                        )
-                        .shadow(color: .black.opacity(0.32), radius: 8, y: 4)
-                        .transition(drawerTransition)
-                } else {
-                    timeRangeTrigger
-                        .background {
-                            fallbackBackground(Capsule(style: .continuous))
-                        }
-                        .overlay(
-                            Capsule(style: .continuous)
-                                .stroke(fallbackStrokeColor, lineWidth: colorSchemeContrast == .increased ? 1 : 0.7)
-                        )
-                        .shadow(color: .black.opacity(0.24), radius: 4, y: 2)
-                        .transition(drawerTransition)
+        HStack(alignment: .top, spacing: controlSpacing) {
+            timeRangeTrigger
+                .background {
+                    fallbackBackground(triggerShape)
                 }
-            }
-            .frame(width: triggerWidth, height: controlHeight, alignment: .topTrailing)
+                .overlay(
+                    triggerShape
+                        .stroke(fallbackStrokeColor, lineWidth: colorSchemeContrast == .increased ? 1 : 0.7)
+                )
+                .shadow(color: .black.opacity(0.24), radius: 4, y: 2)
 
             refreshButton
                 .background {
@@ -361,6 +347,26 @@ struct DataPrimaryContentView: View {
                         .stroke(fallbackStrokeColor, lineWidth: colorSchemeContrast == .increased ? 1 : 0.7)
                 )
                 .shadow(color: .black.opacity(0.24), radius: 4, y: 2)
+        }
+        .overlay(alignment: .topTrailing) {
+            if isTimeRangeDrawerPresented {
+                timeRangeDrawerContent
+                    .padding(4)
+                    .frame(width: triggerWidth)
+                    .background {
+                        fallbackBackground(drawerShape)
+                    }
+                    .overlay(
+                        drawerShape
+                            .stroke(fallbackStrokeColor, lineWidth: colorSchemeContrast == .increased ? 1 : 0.7)
+                    )
+                    .shadow(color: .black.opacity(0.32), radius: 8, y: 4)
+                    .transition(drawerTransition)
+                    .offset(
+                        x: -(controlHeight + controlSpacing),
+                        y: controlHeight + drawerGap
+                    )
+            }
         }
     }
 
@@ -379,17 +385,21 @@ struct DataPrimaryContentView: View {
         Button {
             setDrawerPresented(!isTimeRangeDrawerPresented)
         } label: {
-            HStack(spacing: 4) {
+            ZStack {
                 Text(selectedTimeRange.displayName)
                     .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .center)
 
-                Image(systemName: isTimeRangeDrawerPresented ? "chevron.up" : "chevron.down")
+                Image(systemName: "chevron.up.chevron.down")
                     .font(.system(size: 7, weight: .bold))
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.trailing, 7)
+                    .accessibilityHidden(true)
             }
             .font(.system(size: 9.5, weight: .semibold, design: .rounded))
             .foregroundStyle(controlForeground)
             .frame(width: triggerWidth, height: controlHeight)
-            .contentShape(Capsule(style: .continuous))
+            .contentShape(triggerShape)
         }
         .buttonStyle(IslandPressButtonStyle())
         .help("选择统计时间范围")
@@ -422,18 +432,16 @@ struct DataPrimaryContentView: View {
         Button {
             selectTimeRange(range)
         } label: {
-            HStack(spacing: 5) {
+            ZStack {
+                Text(range.displayName)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
                 if range == selectedTimeRange {
                     Image(systemName: "checkmark")
                         .font(.system(size: 7, weight: .bold))
-                        .frame(width: 9)
-                } else {
-                    Color.clear
-                        .frame(width: 9, height: 7)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityHidden(true)
                 }
-
-                Text(range.displayName)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .font(.system(size: 9.5, weight: range == selectedTimeRange ? .semibold : .medium, design: .rounded))
             .foregroundStyle(
@@ -443,10 +451,6 @@ struct DataPrimaryContentView: View {
             )
             .padding(.horizontal, 5)
             .frame(height: controlHeight)
-            .background(
-                Color.white.opacity(range == selectedTimeRange ? 0.09 : 0),
-                in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-            )
             .contentShape(Rectangle())
         }
         .buttonStyle(IslandPressButtonStyle())
